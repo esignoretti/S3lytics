@@ -20,13 +20,12 @@ import (
 )
 
 type Handler struct {
-	Store            store.Store
-	AuthService      *auth.Service
-	SessionManager   *auth.SessionManager
-	ScanEngine       *scan.Engine
-	S3Client         s3.S3Client
-	Renderer         *web.TemplateRenderer
-	DeepConfig       deep.Config
+	Store          store.Store
+	SessionManager *auth.SessionManager
+	ScanEngine     *scan.Engine
+	S3Client       s3.S3Client
+	Renderer       *web.TemplateRenderer
+	DeepConfig     deep.Config
 }
 
 func (h *Handler) RegisterRoutes(r chi.Router) {
@@ -64,65 +63,36 @@ func (h *Handler) PostLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	loginReq := &auth.LoginRequest{
-		Email:    r.FormValue("email"),
-		Password: r.FormValue("password"),
-		TfaCode:  r.FormValue("tfa_code"),
-		TenantID: r.FormValue("tenant_id"),
-		APIURL:   r.FormValue("api_url"),
+	endpoint := r.FormValue("endpoint")
+	region := r.FormValue("region")
+	accessKey := r.FormValue("access_key")
+	secretKey := r.FormValue("secret_key")
+
+	if endpoint == "" || accessKey == "" || secretKey == "" {
+		renderLogin(w, h.Renderer, "Endpoint, Access Key, and Secret Key are required")
+		return
+	}
+	if region == "" {
+		region = "us-east-1"
 	}
 
 	ctx := context.Background()
 
-	signinResp, err := h.AuthService.Login(ctx, loginReq)
+	s3Client, err := s3.NewCubbitS3Client(endpoint, region, accessKey, secretKey)
 	if err != nil {
-		log.Printf("login failed: %v", err)
-		renderLogin(w, h.Renderer, fmt.Sprintf("Login failed: %v", err))
+		log.Printf("S3 client creation failed: %v", err)
+		renderLogin(w, h.Renderer, fmt.Sprintf("Failed to create S3 client: %v", err))
 		return
 	}
 
-	account, err := h.AuthService.GetAccount(ctx, signinResp.JWT)
-	if err != nil {
-		log.Printf("get account failed: %v", err)
-		renderLogin(w, h.Renderer, "Failed to retrieve account")
-		return
-	}
-
-	if err := h.SessionManager.SaveLogin(ctx, signinResp, account); err != nil {
+	if err := h.SessionManager.SaveLogin(ctx, endpoint, region, accessKey, secretKey); err != nil {
 		log.Printf("save login failed: %v", err)
 		renderLogin(w, h.Renderer, "Failed to save session")
 		return
 	}
 
-	projects, err := h.AuthService.GetProjects(ctx, signinResp.JWT)
-	if err == nil {
-		storeProjects := make([]store.Project, len(projects))
-		for i, p := range projects {
-			storeProjects[i] = store.Project{ID: p.ID, Name: p.Name}
-		}
-		h.Store.SaveProjects(ctx, storeProjects)
-
-		if len(projects) > 0 && account.EndpointGateway != "" {
-			forgeResp, err := h.AuthService.ForgeJWT(ctx, account.ID)
-			if err == nil {
-				keyResp, err := h.AuthService.CreateApiKey(ctx, "s3lytics", account.ID, forgeResp.JWT)
-				if err == nil && keyResp != nil {
-					log.Printf("S3 API key obtained for bucket access")
-
-					s3Client, err := s3.NewCubbitS3Client(
-						account.EndpointGateway,
-						"us-east-1",
-						keyResp.ApiKey,
-						keyResp.SecretKey,
-					)
-					if err == nil {
-						h.S3Client = s3Client
-						h.ScanEngine.SetS3Client(s3Client)
-					}
-				}
-			}
-		}
-	}
+	h.S3Client = s3Client
+	h.ScanEngine.SetS3Client(s3Client)
 
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
