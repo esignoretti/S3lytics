@@ -29,11 +29,17 @@
             </div>
         </nav>
         <main class="main-content">
-            {{block "content" .}}{{end}}
+            {{if eq .Page "dashboard"}}{{template "dashboard" .}}
+            {{else if eq .Page "scan_progress"}}{{template "scan_progress" .}}
+            {{else if eq .Page "scan_report"}}{{template "scan_report" .}}
+            {{else if eq .Page "history"}}{{template "history" .}}
+            {{else if eq .Page "comparison"}}{{template "comparison" .}}
+            {{else if eq .Page "settings"}}{{template "settings" .}}
+            {{else}}{{template "dashboard" .}}{{end}}
         </main>
         {{else}}
         <main class="main-content login-page">
-            {{block "content" .}}{{end}}
+            {{template "login" .}}
         </main>
         {{end}}
     </div>

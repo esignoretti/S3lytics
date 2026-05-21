@@ -206,7 +206,7 @@ func (h *Handler) GetScanProgress(w http.ResponseWriter, r *http.Request) {
 
 	data := &web.PageData{
 		LoggedIn:     true,
-		Page:         "scan",
+		Page:         "scan_progress",
 		ScanID:       scanID,
 		Bucket:       "Loading...",
 		ObjectsFound: 0,
@@ -259,7 +259,7 @@ func (h *Handler) GetScanReport(w http.ResponseWriter, r *http.Request) {
 
 	data := &web.PageData{
 		LoggedIn:     true,
-		Page:         "scan",
+		Page:         "scan_report",
 		AccountEmail: email,
 		Result:       result,
 	}
@@ -457,5 +457,8 @@ func renderLogin(w http.ResponseWriter, r *web.TemplateRenderer, errMsg string) 
 	data := &web.PageData{
 		Error: errMsg,
 	}
-	_ = r.Render(w, "layout.html", data)
+	if err := r.Render(w, "layout.html", data); err != nil {
+		log.Printf("render login error: %v", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+	}
 }

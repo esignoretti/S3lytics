@@ -1,4 +1,4 @@
-{{define "content"}}
+{{define "scan_progress"}}
 <h2 style="margin-bottom: 1.5rem;">Scan in Progress</h2>
 
 <div class="card" id="progress-container" hx-get="/scan/{{.ScanID}}/progress" hx-trigger="every 2s" hx-swap="outerHTML">

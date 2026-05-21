@@ -86,7 +86,7 @@ func NewTemplateRenderer() (*TemplateRenderer, error) {
 		}
 	}
 
-	tmpl := template.New("").Funcs(funcMap)
+	tmpl := template.New("layout.html").Funcs(funcMap)
 	for _, name := range allFiles {
 		content, err := Assets.ReadFile(name)
 		if err != nil {
