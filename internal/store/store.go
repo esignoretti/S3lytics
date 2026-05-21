@@ -250,6 +250,128 @@ func (s *BadgerStore) GetObject(ctx context.Context, bucket string, encodedKey s
 	return nil, badger.ErrKeyNotFound
 }
 
+func scanKey(id string) []byte {
+	return append(prefixScan, []byte(id)...)
+}
+
+func scanSummaryKey(scanID string) []byte {
+	return append(prefixScanSummary, []byte(scanID)...)
+}
+
+func scanResultKey(scanID string) []byte {
+	return append(prefixScanResult, []byte(scanID)...)
+}
+
+func (s *BadgerStore) SaveScan(ctx context.Context, record *ScanRecord) error {
+	return s.set(ctx, scanKey(record.ID), record)
+}
+
+func (s *BadgerStore) GetScan(ctx context.Context, id string) (*ScanRecord, error) {
+	data, err := s.get(ctx, scanKey(id))
+	if err != nil {
+		return nil, err
+	}
+	var rec ScanRecord
+	if err := json.Unmarshal(data, &rec); err != nil {
+		return nil, err
+	}
+	return &rec, nil
+}
+
+func (s *BadgerStore) ListScans(ctx context.Context, bucket string) ([]ScanRecord, error) {
+	vals, err := s.iterateValues(ctx, prefixScan)
+	if err != nil {
+		return nil, err
+	}
+	var scans []ScanRecord
+	for _, data := range vals {
+		var rec ScanRecord
+		if err := json.Unmarshal(data, &rec); err != nil {
+			continue
+		}
+		if bucket == "" || rec.Bucket == bucket {
+			scans = append(scans, rec)
+		}
+	}
+	return scans, nil
+}
+
+func (s *BadgerStore) DeleteScan(ctx context.Context, id string) error {
+	if err := s.del(ctx, scanKey(id)); err != nil && err != badger.ErrKeyNotFound {
+		return err
+	}
+	if err := s.del(ctx, scanSummaryKey(id)); err != nil && err != badger.ErrKeyNotFound {
+		return err
+	}
+	if err := s.del(ctx, scanResultKey(id)); err != nil && err != badger.ErrKeyNotFound {
+		return err
+	}
+	return nil
+}
+
+func (s *BadgerStore) SaveScanSummary(ctx context.Context, scanID string, summary *ScanSummary) error {
+	return s.set(ctx, scanSummaryKey(scanID), summary)
+}
+
+func (s *BadgerStore) GetScanSummary(ctx context.Context, scanID string) (*ScanSummary, error) {
+	data, err := s.get(ctx, scanSummaryKey(scanID))
+	if err != nil {
+		return nil, err
+	}
+	var summary ScanSummary
+	if err := json.Unmarshal(data, &summary); err != nil {
+		return nil, err
+	}
+	return &summary, nil
+}
+
+func (s *BadgerStore) SaveScanResult(ctx context.Context, result *ScanResult) error {
+	return s.set(ctx, scanResultKey(result.Record.ID), result)
+}
+
+func (s *BadgerStore) GetScanResult(ctx context.Context, scanID string) (*ScanResult, error) {
+	data, err := s.get(ctx, scanResultKey(scanID))
+	if err != nil {
+		return nil, err
+	}
+	var result ScanResult
+	if err := json.Unmarshal(data, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+func (s *BadgerStore) AddScanToBucketIndex(ctx context.Context, bucket string, scanID string) error {
+	key := append(prefixBucketIndex, []byte(bucket)...)
+	var ids []string
+	existing, err := s.get(ctx, key)
+	if err == nil {
+		if err := json.Unmarshal(existing, &ids); err != nil {
+			ids = nil
+		}
+	}
+	for _, id := range ids {
+		if id == scanID {
+			return nil
+		}
+	}
+	ids = append(ids, scanID)
+	return s.set(ctx, key, ids)
+}
+
+func (s *BadgerStore) GetBucketScanIDs(ctx context.Context, bucket string) ([]string, error) {
+	key := append(prefixBucketIndex, []byte(bucket)...)
+	data, err := s.get(ctx, key)
+	if err != nil {
+		return nil, err
+	}
+	var ids []string
+	if err := json.Unmarshal(data, &ids); err != nil {
+		return nil, err
+	}
+	return ids, nil
+}
+
 func (s *BadgerStore) iterateValues(ctx context.Context, prefix []byte) ([][]byte, error) {
 	var vals [][]byte
 	err := s.db.View(func(txn *badger.Txn) error {
