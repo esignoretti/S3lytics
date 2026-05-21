@@ -160,6 +160,40 @@ func (s *BadgerStore) ClearAuth(ctx context.Context) error {
 	return nil
 }
 
+func (s *BadgerStore) SaveProjects(ctx context.Context, projects []Project) error {
+	return s.set(ctx, keyProjects, projects)
+}
+
+func (s *BadgerStore) GetProjects(ctx context.Context) ([]Project, error) {
+	data, err := s.get(ctx, keyProjects)
+	if err != nil {
+		return nil, err
+	}
+	var projects []Project
+	if err := json.Unmarshal(data, &projects); err != nil {
+		return nil, err
+	}
+	return projects, nil
+}
+
+func (s *BadgerStore) SaveBuckets(ctx context.Context, projectID string, buckets []Bucket) error {
+	key := append(prefixBuckets, []byte(projectID)...)
+	return s.set(ctx, key, buckets)
+}
+
+func (s *BadgerStore) GetBuckets(ctx context.Context, projectID string) ([]Bucket, error) {
+	key := append(prefixBuckets, []byte(projectID)...)
+	data, err := s.get(ctx, key)
+	if err != nil {
+		return nil, err
+	}
+	var buckets []Bucket
+	if err := json.Unmarshal(data, &buckets); err != nil {
+		return nil, err
+	}
+	return buckets, nil
+}
+
 func (s *BadgerStore) iterateValues(ctx context.Context, prefix []byte) ([][]byte, error) {
 	var vals [][]byte
 	err := s.db.View(func(txn *badger.Txn) error {
