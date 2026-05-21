@@ -194,6 +194,62 @@ func (s *BadgerStore) GetBuckets(ctx context.Context, projectID string) ([]Bucke
 	return buckets, nil
 }
 
+func objectKey(bucket string, encodedKey string) []byte {
+	return append(prefixObjects, []byte(bucket+"/"+encodedKey)...)
+}
+
+func (s *BadgerStore) SaveObject(ctx context.Context, bucket string, obj *ObjectRecord) error {
+	key := objectKey(bucket, obj.ETag+"/"+obj.Key)
+	return s.set(ctx, key, obj)
+}
+
+func (s *BadgerStore) DeleteObject(ctx context.Context, bucket string, encodedKey string) error {
+	prefix := append(prefixObjects, []byte(bucket+"/")...)
+	keys, err := s.iterateKeys(ctx, prefix)
+	if err != nil {
+		return err
+	}
+	for _, k := range keys {
+		if len(k) > len(prefix) && k[len(prefix):] == encodedKey {
+			return s.del(ctx, []byte(k))
+		}
+		if containsSuffix(k, encodedKey) {
+			return s.del(ctx, []byte(k))
+		}
+	}
+	return nil
+}
+
+func containsSuffix(s, suffix string) bool {
+	if len(s) < len(suffix) {
+		return false
+	}
+	return s[len(s)-len(suffix):] == suffix
+}
+
+func (s *BadgerStore) ListObjectKeys(ctx context.Context, bucket string) ([]string, error) {
+	prefix := append(prefixObjects, []byte(bucket+"/")...)
+	return s.iterateKeys(ctx, prefix)
+}
+
+func (s *BadgerStore) GetObject(ctx context.Context, bucket string, encodedKey string) (*ObjectRecord, error) {
+	prefix := append(prefixObjects, []byte(bucket+"/")...)
+	vals, err := s.iterateValues(ctx, prefix)
+	if err != nil {
+		return nil, err
+	}
+	for _, data := range vals {
+		var obj ObjectRecord
+		if err := json.Unmarshal(data, &obj); err != nil {
+			continue
+		}
+		if obj.Key == encodedKey {
+			return &obj, nil
+		}
+	}
+	return nil, badger.ErrKeyNotFound
+}
+
 func (s *BadgerStore) iterateValues(ctx context.Context, prefix []byte) ([][]byte, error) {
 	var vals [][]byte
 	err := s.db.View(func(txn *badger.Txn) error {
