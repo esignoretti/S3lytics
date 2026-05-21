@@ -39,6 +39,9 @@ func (c *CubbitS3Client) GetBucketPolicy(ctx context.Context, bucket string) (st
 	if err != nil {
 		return "", fmt.Errorf("get bucket policy: %w", err)
 	}
+	if resp.Policy == nil {
+		return "", nil
+	}
 	return *resp.Policy, nil
 }
 
