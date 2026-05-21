@@ -1,7 +1,7 @@
 {{define "login"}}
 <div class="card login-box">
     <h1>S3lytics</h1>
-    <p style="color: var(--text-muted); margin-bottom: 1.5rem;">Enter your S3-compatible storage credentials</p>
+    <p style="color: var(--text-muted); margin-bottom: 1.5rem;">Sign in with your Cubbit IAM account</p>
 
     {{if .Error}}
     <div class="error-message">{{.Error}}</div>
@@ -9,27 +9,31 @@
 
     <form action="/login" method="POST">
         <div class="form-group">
-            <label for="endpoint">S3 Endpoint URL</label>
-            <input type="url" id="endpoint" name="endpoint" required placeholder="https://s3.cubbit.eu">
-            <span class="form-help">The S3-compatible endpoint URL</span>
+            <label for="email">Email</label>
+            <input type="email" id="email" name="email" required placeholder="user@example.com">
         </div>
 
         <div class="form-group">
-            <label for="region">Region <span class="form-help">(optional, defaults to us-east-1)</span></label>
-            <input type="text" id="region" name="region" placeholder="us-east-1">
+            <label for="password">Password</label>
+            <input type="password" id="password" name="password" required>
         </div>
 
         <div class="form-group">
-            <label for="access_key">Access Key</label>
-            <input type="text" id="access_key" name="access_key" required>
+            <label for="tfa_code">2FA Code <span class="form-help">(optional)</span></label>
+            <input type="text" id="tfa_code" name="tfa_code" placeholder="000000">
         </div>
 
         <div class="form-group">
-            <label for="secret_key">Secret Key</label>
-            <input type="password" id="secret_key" name="secret_key" required>
+            <label for="tenant_id">Tenant ID <span class="form-help">(optional)</span></label>
+            <input type="text" id="tenant_id" name="tenant_id" placeholder="tenant-id">
         </div>
 
-        <button type="submit" class="btn" style="width:100%;">Connect</button>
+        <div class="form-group">
+            <label for="api_url">API Server URL <span class="form-help">(optional, defaults to Cubbit IAM)</span></label>
+            <input type="url" id="api_url" name="api_url" placeholder="https://iam.cubbit.eu">
+        </div>
+
+        <button type="submit" class="btn" style="width:100%;">Sign In</button>
     </form>
 </div>
 {{end}}
