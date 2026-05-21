@@ -1,0 +1,51 @@
+{{define "content"}}
+<h2 style="margin-bottom: 1.5rem;">Dashboard</h2>
+
+<div class="card">
+    <h2>Select Bucket</h2>
+    <form hx-post="/scan/start" hx-target="#scan-result" hx-swap="innerHTML">
+        <div class="form-group">
+            <label for="project">Project</label>
+            <select id="project" name="project" hx-get="/buckets" hx-target="#bucket" hx-trigger="change">
+                <option value="">Select a project...</option>
+                {{range .Projects}}
+                <option value="{{.ID}}">{{.Name}}</option>
+                {{end}}
+            </select>
+        </div>
+
+        <div class="form-group">
+            <label for="bucket">Bucket</label>
+            <select id="bucket" name="bucket">
+                <option value="">Select a project first...</option>
+            </select>
+        </div>
+
+        <div class="form-group">
+            <label>Deep Scan Features</label>
+            <div class="checkbox-group">
+                <label><input type="checkbox" name="deep_duplicates" checked> Duplicates</label>
+                <label><input type="checkbox" name="deep_multipart" checked> Multipart Uploads</label>
+                <label><input type="checkbox" name="deep_access" checked> Access Audit</label>
+                <label><input type="checkbox" name="deep_encryption" checked> Encryption</label>
+                <label><input type="checkbox" name="deep_versioning" checked> Versioning</label>
+                <label><input type="checkbox" name="deep_large_files" checked> Large Files</label>
+                <label><input type="checkbox" name="deep_naming" checked> Naming</label>
+                <label><input type="checkbox" name="deep_cost" checked> Cost Estimate</label>
+                <label><input type="checkbox" name="deep_virus"> Virus Scan</label>
+            </div>
+        </div>
+
+        <div class="form-group" style="display:flex; gap:0.75rem;">
+            <button type="submit" class="btn">Start Full Scan</button>
+            <button type="submit" name="incremental" value="true" class="btn btn-secondary">Start Incremental Scan</button>
+        </div>
+
+        <div style="margin-top:0.75rem; display:flex; gap:0.75rem;">
+            <a href="/history" class="btn btn-secondary">View History</a>
+        </div>
+    </form>
+</div>
+
+<div id="scan-result"></div>
+{{end}}

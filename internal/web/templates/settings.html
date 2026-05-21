@@ -1,0 +1,57 @@
+{{define "content"}}
+<h2 style="margin-bottom: 1.5rem;">Settings</h2>
+
+<form action="/settings" method="POST">
+    <div class="card settings-section">
+        <h2>ClamAV</h2>
+        <div class="form-group">
+            <label for="clamd_socket">ClamAV Socket Path</label>
+            <input type="text" id="clamd_socket" name="clamd_socket" value="{{.Settings.ClamdSocket}}" placeholder="/var/run/clamav/clamd.sock">
+            <span class="form-help">Unix socket path or tcp://host:3310</span>
+        </div>
+    </div>
+
+    <div class="card settings-section">
+        <h2>Deep Scan Defaults</h2>
+        <div class="checkbox-group">
+            <label><input type="checkbox" name="deep_duplicates" {{if .Settings.DeepDuplicates}}checked{{end}}> Duplicates</label>
+            <label><input type="checkbox" name="deep_multipart" {{if .Settings.DeepMultipart}}checked{{end}}> Multipart</label>
+            <label><input type="checkbox" name="deep_access" {{if .Settings.DeepAccess}}checked{{end}}> Access Audit</label>
+            <label><input type="checkbox" name="deep_encryption" {{if .Settings.DeepEncryption}}checked{{end}}> Encryption</label>
+            <label><input type="checkbox" name="deep_versioning" {{if .Settings.DeepVersioning}}checked{{end}}> Versioning</label>
+            <label><input type="checkbox" name="deep_large_files" {{if .Settings.DeepLargeFiles}}checked{{end}}> Large Files</label>
+            <label><input type="checkbox" name="deep_naming" {{if .Settings.DeepNaming}}checked{{end}}> Naming</label>
+            <label><input type="checkbox" name="deep_cost" {{if .Settings.DeepCost}}checked{{end}}> Cost Estimate</label>
+        </div>
+    </div>
+
+    <div class="card settings-section">
+        <h2>Naming Convention</h2>
+        <div class="form-group">
+            <label for="naming_pattern">Regex Pattern</label>
+            <input type="text" id="naming_pattern" name="naming_pattern" value="{{.Settings.NamingPattern}}" placeholder="^[a-z0-9-/]+$">
+            <span class="form-help">Leave empty to skip naming check</span>
+        </div>
+    </div>
+
+    <div class="card settings-section">
+        <h2>Large File Threshold</h2>
+        <div class="form-group">
+            <label for="large_file_threshold">Threshold (MB)</label>
+            <input type="number" id="large_file_threshold" name="large_file_threshold" value="{{.Settings.LargeFileThresholdMB}}" min="1">
+        </div>
+    </div>
+
+    <div class="card settings-section">
+        <h2>Cost Estimation ($/GB/month)</h2>
+        {{range $class, $cost := .Settings.CostRates}}
+        <div class="form-group">
+            <label for="cost_{{$class}}">{{$class}}</label>
+            <input type="number" step="0.001" id="cost_{{$class}}" name="cost_{{$class}}" value="{{$cost}}">
+        </div>
+        {{end}}
+    </div>
+
+    <button type="submit" class="btn">Save Settings</button>
+</form>
+{{end}}

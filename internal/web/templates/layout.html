@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>S3lytics</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+    <script src="https://unpkg.com/htmx.org@1.9.10"></script>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <div class="app">
+        {{if .LoggedIn}}
+        <nav class="sidebar">
+            <div class="sidebar-header">
+                <h1>S3lytics</h1>
+                <span class="version">v0.1.0</span>
+            </div>
+            <ul class="sidebar-nav">
+                <li><a href="/" class="{{if eq .Page "dashboard"}}active{{end}}">Dashboard</a></li>
+                <li><a href="/history" class="{{if eq .Page "history"}}active{{end}}">Scan History</a></li>
+                <li><a href="/settings" class="{{if eq .Page "settings"}}active{{end}}">Settings</a></li>
+            </ul>
+            <div class="sidebar-footer">
+                <span class="account-email">{{.AccountEmail}}</span>
+                <form action="/logout" method="POST" style="display:inline;">
+                    <button type="submit" class="btn-link">Logout</button>
+                </form>
+            </div>
+        </nav>
+        <main class="main-content">
+            {{block "content" .}}{{end}}
+        </main>
+        {{else}}
+        <main class="main-content login-page">
+            {{block "content" .}}{{end}}
+        </main>
+        {{end}}
+    </div>
+</body>
+</html>

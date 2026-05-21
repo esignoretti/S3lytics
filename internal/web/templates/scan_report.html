@@ -1,0 +1,316 @@
+{{define "content"}}
+<h2 style="margin-bottom: 1.5rem;">Scan Report: {{.Result.Record.Bucket}}</h2>
+
+<div style="margin-bottom: 1rem; display:flex; gap:0.75rem; align-items:center;">
+    <span class="badge {{if eq .Result.Record.Status "completed"}}badge-green{{else}}badge-yellow{{end}}">
+        {{.Result.Record.Status}}
+    </span>
+    <span style="font-size:0.875rem; color:var(--text-muted);">
+        {{.Result.Record.ScanType}} scan &middot; {{.Result.Record.Timestamp}} &middot; {{.Result.Record.Duration}}
+    </span>
+    <button class="btn-link" style="margin-left:auto;" onclick="window.print()">Download Report</button>
+    <form action="/scan/{{.Result.Record.ID}}/delete" method="POST" style="display:inline;"
+          onsubmit="return confirm('Delete this scan?')">
+        <button type="submit" class="btn-link" style="color:var(--red);">Delete</button>
+    </form>
+</div>
+
+<div class="card-row">
+    <div class="stat-card">
+        <div class="stat-value">{{.Result.Summary.TotalObjects}}</div>
+        <div class="stat-label">Total Objects</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-value">{{formatBytes .Result.Summary.TotalSize}}</div>
+        <div class="stat-label">Total Size</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-value">{{formatBytes .Result.Summary.AvgSize}}</div>
+        <div class="stat-label">Avg Size</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-value">{{formatBytes .Result.Summary.MedianSize}}</div>
+        <div class="stat-label">Median Size</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-value">{{formatBytes .Result.Summary.MaxSize}}</div>
+        <div class="stat-label">Max Size</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-value">{{.Result.Summary.EmptyObjects}}</div>
+        <div class="stat-label">Empty Objects</div>
+    </div>
+</div>
+
+{{if .Result.Delta}}
+<div class="card">
+    <h2>Delta Report</h2>
+    <div style="display:grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap:1rem; text-align:center;">
+        <div><span style="font-size:1.25rem; font-weight:700; color:var(--green);">+{{.Result.Delta.New}}</span><br><span style="font-size:0.75rem;color:var(--text-muted);">New</span></div>
+        <div><span style="font-size:1.25rem; font-weight:700; color:var(--yellow);">{{.Result.Delta.Modified}}</span><br><span style="font-size:0.75rem;color:var(--text-muted);">Modified</span></div>
+        <div><span style="font-size:1.25rem; font-weight:700; color:var(--red);">-{{.Result.Delta.Deleted}}</span><br><span style="font-size:0.75rem;color:var(--text-muted);">Deleted</span></div>
+        <div><span style="font-size:1.25rem; font-weight:700;">{{.Result.Delta.Unchanged}}</span><br><span style="font-size:0.75rem;color:var(--text-muted);">Unchanged</span></div>
+    </div>
+</div>
+{{end}}
+
+<div class="card">
+    <h2>File Types</h2>
+    <div class="chart-container">
+        <canvas id="typesChart"></canvas>
+    </div>
+    <table>
+        <thead><tr><th>Extension</th><th>Count</th><th>Size</th><th>%</th></tr></thead>
+        <tbody>
+        {{range .Result.Types}}
+        <tr><td>{{.Ext}}</td><td>{{.Count}}</td><td>{{formatBytes .TotalSize}}</td><td>{{.Pct}}%</td></tr>
+        {{end}}
+        </tbody>
+    </table>
+</div>
+
+<div class="card">
+    <h2>Age Distribution</h2>
+    <div class="chart-container">
+        <canvas id="agesChart"></canvas>
+    </div>
+    <table>
+        <thead><tr><th>Age</th><th>Count</th><th>Size</th></tr></thead>
+        <tbody>
+        {{range .Result.Ages}}
+        <tr><td>{{.Label}}</td><td>{{.Count}}</td><td>{{formatBytes .Size}}</td></tr>
+        {{end}}
+        </tbody>
+    </table>
+</div>
+
+<div class="card">
+    <h2>Storage Classes</h2>
+    <table>
+        <thead><tr><th>Class</th><th>Count</th><th>Size</th></tr></thead>
+        <tbody>
+        {{range .Result.Storage}}
+        <tr><td>{{.Class}}</td><td>{{.Count}}</td><td>{{formatBytes .Size}}</td></tr>
+        {{end}}
+        </tbody>
+    </table>
+</div>
+
+<div class="card">
+    <h2>Top-Level Prefixes</h2>
+    <table>
+        <thead><tr><th>Prefix</th><th>Count</th><th>Size</th></tr></thead>
+        <tbody>
+        {{range .Result.Prefixes}}
+        <tr><td>{{.Prefix}}</td><td>{{.Count}}</td><td>{{formatBytes .Size}}</td></tr>
+        {{end}}
+        </tbody>
+    </table>
+</div>
+
+{{if .Result.Duplicates}}
+<div class="accordion-section open">
+    <div class="accordion-header" onclick="this.parentElement.classList.toggle('open')">
+        <span>Duplicate Detection ({{len .Result.Duplicates}} groups)</span>
+        <span>&#9660;</span>
+    </div>
+    <div class="accordion-body">
+        <table>
+            <thead><tr><th>ETag</th><th>Count</th><th>Wasted</th><th>Keys</th></tr></thead>
+            <tbody>
+            {{range .Result.Duplicates}}
+            <tr><td>{{.ETag}}</td><td>{{.Count}}</td><td>{{formatBytes .TotalSize}}</td><td>{{join .Keys ", "}}</td></tr>
+            {{end}}
+            </tbody>
+        </table>
+    </div>
+</div>
+{{end}}
+
+{{if .Result.Multiparts}}
+<div class="accordion-section open">
+    <div class="accordion-header" onclick="this.parentElement.classList.toggle('open')">
+        <span>Incomplete Multipart Uploads ({{len .Result.Multiparts}})</span>
+        <span>&#9660;</span>
+    </div>
+    <div class="accordion-body">
+        <table>
+            <thead><tr><th>Key</th><th>Upload ID</th><th>Initiated</th></tr></thead>
+            <tbody>
+            {{range .Result.Multiparts}}
+            <tr><td>{{.Key}}</td><td>{{.UploadID}}</td><td>{{.Initiated}}</td></tr>
+            {{end}}
+            </tbody>
+        </table>
+    </div>
+</div>
+{{end}}
+
+{{if .Result.AccessAudit}}
+<div class="accordion-section open">
+    <div class="accordion-header" onclick="this.parentElement.classList.toggle('open')">
+        <span>Access Audit{{if .Result.AccessAudit.Findings}} <span class="badge badge-red">{{len .Result.AccessAudit.Findings}} findings{{end}}</span>
+        <span>&#9660;</span>
+    </div>
+    <div class="accordion-body">
+        {{if .Result.AccessAudit.PublicAccessBlocked}}
+        <p style="color:var(--green);">&#10003; Public access block is configured</p>
+        {{else}}
+        <p style="color:var(--red);">&#10007; Public access block not configured</p>
+        {{end}}
+        {{range .Result.AccessAudit.Findings}}
+        <div style="margin-top:0.75rem; padding:0.75rem; background:var(--surface-2); border-radius:var(--radius);">
+            <span class="badge {{if eq .Severity "HIGH"}}badge-red{{else}}badge-yellow{{end}}">{{.Severity}}</span>
+            <strong>{{.Message}}</strong>
+            <p style="font-size:0.875rem; color:var(--text-muted); margin-top:0.25rem;">{{.Detail}}</p>
+        </div>
+        {{end}}
+    </div>
+</div>
+{{end}}
+
+{{if .Result.Encryption}}
+<div class="accordion-section open">
+    <div class="accordion-header" onclick="this.parentElement.classList.toggle('open')">
+        <span>Encryption Audit &mdash; {{printf "%.1f" .Result.Encryption.EncryptedPct}}% encrypted</span>
+        <span>&#9660;</span>
+    </div>
+    <div class="accordion-body">
+        <p>Algorithms: {{join .Result.Encryption.Algorithms ", "}}</p>
+        {{if .Result.Encryption.UnencryptedKeys}}
+        <p style="color:var(--red); margin-top:0.75rem;">{{len .Result.Encryption.UnencryptedKeys}} unencrypted object samples</p>
+        <ul style="font-size:0.875rem; margin-top:0.5rem;">
+            {{range .Result.Encryption.UnencryptedKeys}}
+            <li>{{.}}</li>
+            {{end}}
+        </ul>
+        {{end}}
+    </div>
+</div>
+{{end}}
+
+{{if .Result.Versioning}}
+<div class="accordion-section open">
+    <div class="accordion-header" onclick="this.parentElement.classList.toggle('open')">
+        <span>Versioning Waste</span>
+        <span>&#9660;</span>
+    </div>
+    <div class="accordion-body">
+        <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:1rem;">
+            <div><strong>{{.Result.Versioning.TotalVersions}}</strong><br><span style="font-size:0.875rem;color:var(--text-muted);">Total Versions</span></div>
+            <div><strong>{{.Result.Versioning.NonCurrentCount}}</strong><br><span style="font-size:0.875rem;color:var(--text-muted);">Non-Current</span></div>
+            <div><strong>{{formatBytes .Result.Versioning.WastedBytes}}</strong><br><span style="font-size:0.875rem;color:var(--text-muted);">Wasted Space</span></div>
+        </div>
+    </div>
+</div>
+{{end}}
+
+{{if .Result.LargeFiles}}
+<div class="accordion-section open">
+    <div class="accordion-header" onclick="this.parentElement.classList.toggle('open')">
+        <span>Large Files ({{len .Result.LargeFiles}})</span>
+        <span>&#9660;</span>
+    </div>
+    <div class="accordion-body">
+        <table>
+            <thead><tr><th>Key</th><th>Size</th><th>Last Modified</th></tr></thead>
+            <tbody>
+            {{range .Result.LargeFiles}}
+            <tr><td>{{.Key}}</td><td>{{formatBytes .Size}}</td><td>{{.LastModified}}</td></tr>
+            {{end}}
+            </tbody>
+        </table>
+    </div>
+</div>
+{{end}}
+
+{{if .Result.Naming}}
+<div class="accordion-section open">
+    <div class="accordion-header" onclick="this.parentElement.classList.toggle('open')">
+        <span>Naming Convention &mdash; {{.Result.Naming.NonCompliantCount}} non-compliant</span>
+        <span>&#9660;</span>
+    </div>
+    <div class="accordion-body">
+        <p>Pattern: <code>{{.Result.Naming.Pattern}}</code></p>
+        {{if .Result.Naming.Examples}}
+        <ul style="font-size:0.875rem; margin-top:0.5rem; color:var(--red);">
+            {{range .Result.Naming.Examples}}<li>{{.}}</li>{{end}}
+        </ul>
+        {{end}}
+    </div>
+</div>
+{{end}}
+
+{{if .Result.CostEstimate}}
+<div class="accordion-section open">
+    <div class="accordion-header" onclick="this.parentElement.classList.toggle('open')">
+        <span>Cost Estimate &mdash; ${{printf "%.2f" .Result.CostEstimate.MonthlyTotal}}/month</span>
+        <span>&#9660;</span>
+    </div>
+    <div class="accordion-body">
+        <table>
+            <thead><tr><th>Storage Class</th><th>Monthly Cost</th></tr></thead>
+            <tbody>
+            {{range .Result.CostEstimate.Breakdown}}
+            <tr><td>{{.Class}}</td><td>${{printf "%.4f" .MonthlyCost}}</td></tr>
+            {{end}}
+            <tr style="font-weight:700;"><td>Total</td><td>${{printf "%.2f" .Result.CostEstimate.MonthlyTotal}}</td></tr>
+            </tbody>
+        </table>
+    </div>
+</div>
+{{end}}
+
+{{if .Result.Virus}}
+<div class="accordion-section open">
+    <div class="accordion-header" onclick="this.parentElement.classList.toggle('open')">
+        <span>Virus Scan &mdash; {{.Result.Virus.Scanned}} scanned{{if .Result.Virus.Infected}}, {{len .Result.Virus.Infected}} infected{{end}}</span>
+        <span>&#9660;</span>
+    </div>
+    <div class="accordion-body">
+        {{if .Result.Virus.Infected}}
+        <div style="color:var(--red);">
+            <strong>Infected files:</strong>
+            <ul>{{range .Result.Virus.Infected}}<li>{{.}}</li>{{end}}</ul>
+        </div>
+        {{end}}
+        {{if .Result.Virus.Errors}}
+        <div style="color:var(--yellow); margin-top:0.75rem;">
+            <strong>Errors:</strong>
+            <ul>{{range .Result.Virus.Errors}}<li>{{.}}</li>{{end}}</ul>
+        </div>
+        {{end}}
+    </div>
+</div>
+{{end}}
+
+<script>
+var typesLabels = [];
+var typesData = [];
+var agesLabels = [];
+var agesCounts = [];
+{{range $i, $t := .Result.Types}}
+typesLabels.push("{{$t.Ext}}");
+typesData.push({{$t.Count}});
+{{end}}
+{{range $i, $a := .Result.Ages}}
+agesLabels.push("{{$a.Label}}");
+agesCounts.push({{$a.Count}});
+{{end}}
+new Chart(document.getElementById('typesChart'), {
+    type: 'pie',
+    data: {
+        labels: typesLabels,
+        datasets: [{ data: typesData, backgroundColor: ['#4f8cff','#34d399','#f87171','#fbbf24','#a78bfa','#f472b6','#2dd4bf','#fb923c'] }]
+    }
+});
+new Chart(document.getElementById('agesChart'), {
+    type: 'bar',
+    data: {
+        labels: agesLabels,
+        datasets: [{ label: 'Objects', data: agesCounts, backgroundColor: '#4f8cff' }]
+    },
+    options: { scales: { y: { beginAtZero: true } } }
+});
+</script>
+{{end}}
