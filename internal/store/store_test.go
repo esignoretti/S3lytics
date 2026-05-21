@@ -136,6 +136,38 @@ func TestScanCRUD(t *testing.T) {
 	}
 }
 
+func TestDeleteScan(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	rec := &ScanRecord{ID: "to-delete", Bucket: "b1", Status: "completed"}
+	if err := s.SaveScan(ctx, rec); err != nil {
+		t.Fatal(err)
+	}
+	summary := &ScanSummary{TotalObjects: 10}
+	if err := s.SaveScanSummary(ctx, "to-delete", summary); err != nil {
+		t.Fatal(err)
+	}
+	result := &ScanResult{Record: ScanRecord{ID: "to-delete"}}
+	if err := s.SaveScanResult(ctx, result); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := s.DeleteScan(ctx, "to-delete"); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := s.GetScan(ctx, "to-delete"); err != badger.ErrKeyNotFound {
+		t.Errorf("expected ErrKeyNotFound for scan, got %v", err)
+	}
+	if _, err := s.GetScanSummary(ctx, "to-delete"); err != badger.ErrKeyNotFound {
+		t.Errorf("expected ErrKeyNotFound for summary, got %v", err)
+	}
+	if _, err := s.GetScanResult(ctx, "to-delete"); err != badger.ErrKeyNotFound {
+		t.Errorf("expected ErrKeyNotFound for result, got %v", err)
+	}
+}
+
 func TestScanResult(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()

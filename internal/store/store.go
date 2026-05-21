@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/dgraph-io/badger/v4"
 )
@@ -204,27 +205,25 @@ func (s *BadgerStore) SaveObject(ctx context.Context, bucket string, obj *Object
 }
 
 func (s *BadgerStore) DeleteObject(ctx context.Context, bucket string, encodedKey string) error {
+	// Key format: objects/{bucket}/{etag}/{key}
+	// Find the key by checking the portion after the second '/'
 	prefix := append(prefixObjects, []byte(bucket+"/")...)
 	keys, err := s.iterateKeys(ctx, prefix)
 	if err != nil {
 		return err
 	}
 	for _, k := range keys {
-		if len(k) > len(prefix) && k[len(prefix):] == encodedKey {
-			return s.del(ctx, []byte(k))
+		suffix := k[len(prefix):] // "{etag}/{key}"
+		slashIdx := strings.IndexByte(suffix, '/')
+		if slashIdx < 0 {
+			continue
 		}
-		if containsSuffix(k, encodedKey) {
+		objKey := suffix[slashIdx+1:]
+		if objKey == encodedKey {
 			return s.del(ctx, []byte(k))
 		}
 	}
 	return nil
-}
-
-func containsSuffix(s, suffix string) bool {
-	if len(s) < len(suffix) {
-		return false
-	}
-	return s[len(s)-len(suffix):] == suffix
 }
 
 func (s *BadgerStore) ListObjectKeys(ctx context.Context, bucket string) ([]string, error) {
@@ -233,21 +232,38 @@ func (s *BadgerStore) ListObjectKeys(ctx context.Context, bucket string) ([]stri
 }
 
 func (s *BadgerStore) GetObject(ctx context.Context, bucket string, encodedKey string) (*ObjectRecord, error) {
+	// Key format: objects/{bucket}/{etag}/{key}
+	// Iterate keys, find the one matching encodedKey, then fetch directly
 	prefix := append(prefixObjects, []byte(bucket+"/")...)
-	vals, err := s.iterateValues(ctx, prefix)
+	keys, err := s.iterateKeys(ctx, prefix)
 	if err != nil {
 		return nil, err
 	}
-	for _, data := range vals {
-		var obj ObjectRecord
-		if err := json.Unmarshal(data, &obj); err != nil {
+	var targetKey string
+	for _, k := range keys {
+		suffix := k[len(prefix):]
+		slashIdx := strings.IndexByte(suffix, '/')
+		if slashIdx < 0 {
 			continue
 		}
-		if obj.Key == encodedKey {
-			return &obj, nil
+		objKey := suffix[slashIdx+1:]
+		if objKey == encodedKey {
+			targetKey = k
+			break
 		}
 	}
-	return nil, badger.ErrKeyNotFound
+	if targetKey == "" {
+		return nil, badger.ErrKeyNotFound
+	}
+	data, err := s.get(ctx, []byte(targetKey))
+	if err != nil {
+		return nil, err
+	}
+	var obj ObjectRecord
+	if err := json.Unmarshal(data, &obj); err != nil {
+		return nil, err
+	}
+	return &obj, nil
 }
 
 func scanKey(id string) []byte {
@@ -343,20 +359,27 @@ func (s *BadgerStore) GetScanResult(ctx context.Context, scanID string) (*ScanRe
 
 func (s *BadgerStore) AddScanToBucketIndex(ctx context.Context, bucket string, scanID string) error {
 	key := append(prefixBucketIndex, []byte(bucket)...)
-	var ids []string
-	existing, err := s.get(ctx, key)
-	if err == nil {
-		if err := json.Unmarshal(existing, &ids); err != nil {
-			ids = nil
+	return s.db.Update(func(txn *badger.Txn) error {
+		item, err := txn.Get(key)
+		var ids []string
+		if err == nil {
+			data, err := item.ValueCopy(nil)
+			if err == nil {
+				json.Unmarshal(data, &ids)
+			}
 		}
-	}
-	for _, id := range ids {
-		if id == scanID {
-			return nil
+		for _, id := range ids {
+			if id == scanID {
+				return nil
+			}
 		}
-	}
-	ids = append(ids, scanID)
-	return s.set(ctx, key, ids)
+		ids = append(ids, scanID)
+		data, err := json.Marshal(ids)
+		if err != nil {
+			return err
+		}
+		return txn.Set(key, data)
+	})
 }
 
 func (s *BadgerStore) GetBucketScanIDs(ctx context.Context, bucket string) ([]string, error) {
