@@ -38,27 +38,21 @@ func (m *mockS3Client) HeadObject(ctx context.Context, bucket, key string) (*s3.
 func (m *mockS3Client) ListMultipartUploads(ctx context.Context, bucket string) ([]types.MultipartUpload, error) {
 	return nil, nil
 }
-
 func (m *mockS3Client) GetBucketPolicy(ctx context.Context, bucket string) (string, error) {
 	return "", nil
 }
-
 func (m *mockS3Client) GetBucketAcl(ctx context.Context, bucket string) ([]types.Grant, error) {
 	return nil, nil
 }
-
 func (m *mockS3Client) GetPublicAccessBlock(ctx context.Context, bucket string) (*types.PublicAccessBlockConfiguration, error) {
 	return nil, nil
 }
-
 func (m *mockS3Client) GetBucketEncryption(ctx context.Context, bucket string) (*types.ServerSideEncryptionConfiguration, error) {
 	return nil, nil
 }
-
 func (m *mockS3Client) ListObjectVersions(ctx context.Context, bucket string) ([]types.ObjectVersion, []types.DeleteMarkerEntry, error) {
 	return nil, nil, nil
 }
-
 func (m *mockS3Client) GetObject(ctx context.Context, bucket, key string, rangeSpec *string) ([]byte, error) {
 	return nil, nil
 }
@@ -76,6 +70,18 @@ func newTestStore(t *testing.T) *store.BadgerStore {
 	}
 	t.Cleanup(func() { s.Close() })
 	return s
+}
+
+func waitForScanComplete(t *testing.T, engine *Engine) {
+	t.Helper()
+	for i := 0; i < 100; i++ {
+		p := engine.GetProgress()
+		if p != nil && p.Status == "completed" {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("scan did not complete within timeout")
 }
 
 func TestFullScanBasic(t *testing.T) {
@@ -96,7 +102,7 @@ func TestFullScanBasic(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	time.Sleep(500 * time.Millisecond)
+	waitForScanComplete(t, engine)
 
 	result, err := st.GetScanResult(ctx, scanID)
 	if err != nil {
@@ -127,10 +133,16 @@ func TestScanTypeBreakdown(t *testing.T) {
 	engine := NewEngine(mock, st)
 	ctx := context.Background()
 
-	scanID, _ := engine.StartFullScan(ctx, "test-bucket")
-	time.Sleep(500 * time.Millisecond)
+	scanID, err := engine.StartFullScan(ctx, "test-bucket")
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitForScanComplete(t, engine)
 
-	result, _ := st.GetScanResult(ctx, scanID)
+	result, err := st.GetScanResult(ctx, scanID)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(result.Types) != 2 {
 		t.Errorf("expected 2 type breakdowns, got %d", len(result.Types))
 	}
@@ -147,8 +159,11 @@ func TestScanProgressTracking(t *testing.T) {
 	engine := NewEngine(mock, st)
 	ctx := context.Background()
 
-	scanID, _ := engine.StartFullScan(ctx, "test-bucket")
-	time.Sleep(500 * time.Millisecond)
+	scanID, err := engine.StartFullScan(ctx, "test-bucket")
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitForScanComplete(t, engine)
 
 	progress := engine.GetProgress()
 	if progress == nil {
@@ -174,25 +189,96 @@ func TestIncrementalScan(t *testing.T) {
 	engine := NewEngine(mock, st)
 	ctx := context.Background()
 
+	// First: full scan with 2 objects
 	_, err := engine.StartFullScan(ctx, "test-bucket")
 	if err != nil {
 		t.Fatal(err)
 	}
-	time.Sleep(500 * time.Millisecond)
+	waitForScanComplete(t, engine)
 
-	scanID, err := engine.StartIncrementalScan(ctx, "test-bucket")
+	// Change mock to return a modified set: keep a.txt (same etag), modify b.txt, add c.txt
+	mock.objects = []s3.ObjectInfo{
+		{Key: "a.txt", ETag: "e1", Size: 100, LastModified: time.Now()},
+		{Key: "b.txt", ETag: "e2-modified", Size: 250, LastModified: time.Now()},
+		{Key: "c.txt", ETag: "e3", Size: 300, LastModified: time.Now()},
+	}
+
+	// Second: incremental scan
+	scanID2, err := engine.StartIncrementalScan(ctx, "test-bucket")
 	if err != nil {
 		t.Fatal(err)
 	}
-	time.Sleep(500 * time.Millisecond)
+	waitForScanComplete(t, engine)
 
-	result, err := st.GetScanResult(ctx, scanID)
+	result, err := st.GetScanResult(ctx, scanID2)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	if result.Delta == nil {
 		t.Fatal("expected delta report for incremental scan")
+	}
+	if result.Delta.New != 1 {
+		t.Errorf("expected 1 new object (c.txt), got %d", result.Delta.New)
+	}
+	if result.Delta.Modified != 1 {
+		t.Errorf("expected 1 modified (b.txt), got %d", result.Delta.Modified)
+	}
+	if result.Delta.Unchanged != 1 {
+		t.Errorf("expected 1 unchanged (a.txt), got %d", result.Delta.Unchanged)
+	}
+	if result.Delta.Deleted != 0 {
+		t.Errorf("expected 0 deleted, got %d", result.Delta.Deleted)
+	}
+}
+
+func TestIncrementalScanDeleted(t *testing.T) {
+	st := newTestStore(t)
+	mock := &mockS3Client{
+		objects: []s3.ObjectInfo{
+			{Key: "a.txt", ETag: "e1", Size: 100, LastModified: time.Now()},
+			{Key: "b.txt", ETag: "e2", Size: 200, LastModified: time.Now()},
+		},
+	}
+
+	engine := NewEngine(mock, st)
+	ctx := context.Background()
+
+	_, err := engine.StartFullScan(ctx, "test-bucket")
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitForScanComplete(t, engine)
+
+	// Remove b.txt from the listing
+	mock.objects = []s3.ObjectInfo{
+		{Key: "a.txt", ETag: "e1", Size: 100, LastModified: time.Now()},
+	}
+
+	scanID2, err := engine.StartIncrementalScan(ctx, "test-bucket")
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitForScanComplete(t, engine)
+
+	result, err := st.GetScanResult(ctx, scanID2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Delta == nil {
+		t.Fatal("expected delta report")
+	}
+	if result.Delta.Deleted != 1 {
+		t.Errorf("expected 1 deleted (b.txt), got %d", result.Delta.Deleted)
+	}
+	if result.Delta.New != 0 {
+		t.Errorf("expected 0 new, got %d", result.Delta.New)
+	}
+	if result.Delta.Modified != 0 {
+		t.Errorf("expected 0 modified, got %d", result.Delta.Modified)
+	}
+	if result.Delta.Unchanged != 1 {
+		t.Errorf("expected 1 unchanged (a.txt), got %d", result.Delta.Unchanged)
 	}
 }
 
@@ -237,7 +323,8 @@ func TestConcurrentScanGuard(t *testing.T) {
 	if err == nil {
 		t.Error("expected error for concurrent scan, got nil")
 	}
-	time.Sleep(300 * time.Millisecond)
+
+	waitForScanComplete(t, engine)
 }
 
 func TestSetS3Client(t *testing.T) {
@@ -256,7 +343,7 @@ func TestSetS3Client(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	time.Sleep(300 * time.Millisecond)
+	waitForScanComplete(t, engine)
 
 	result, err := st.GetScanResult(ctx, scanID)
 	if err != nil {

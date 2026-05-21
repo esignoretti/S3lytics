@@ -50,6 +50,10 @@ func (e *Engine) SetS3Client(client s3.S3Client) {
 
 func (e *Engine) StartFullScan(ctx context.Context, bucket string) (string, error) {
 	e.mu.Lock()
+	if e.client == nil {
+		e.mu.Unlock()
+		return "", fmt.Errorf("S3 client not set — log in first")
+	}
 	if e.running[bucket] {
 		e.mu.Unlock()
 		return "", fmt.Errorf("scan already in progress for bucket %s", bucket)
@@ -218,6 +222,10 @@ func (e *Engine) GetProgress() *ScanProgress {
 
 func (e *Engine) StartIncrementalScan(ctx context.Context, bucket string) (string, error) {
 	e.mu.Lock()
+	if e.client == nil {
+		e.mu.Unlock()
+		return "", fmt.Errorf("S3 client not set — log in first")
+	}
 	if e.running[bucket] {
 		e.mu.Unlock()
 		return "", fmt.Errorf("scan already in progress for bucket %s", bucket)
@@ -260,11 +268,22 @@ func (e *Engine) runIncrementalScan(ctx context.Context, scanID, bucket string) 
 		e.mu.Unlock()
 	}()
 
-	previousKeys, err := e.store.ListObjectKeys(ctx, bucket)
-	previousKeysMap := make(map[string]bool)
-	if err == nil {
-		for _, k := range previousKeys {
-			previousKeysMap[k] = true
+	// Load all previous object keys and build a map of key -> previous object
+	// ListObjectKeys returns full Badger keys: "objects/{bucket}/{etag}/{key}"
+	previousKeys, _ := e.store.ListObjectKeys(ctx, bucket)
+	previousObjects := make(map[string]*store.ObjectRecord)
+	for _, k := range previousKeys {
+		// Extract object key from "objects/{bucket}/{etag}/{key}"
+		prefix := "objects/" + bucket + "/"
+		if len(k) > len(prefix) {
+			suffix := k[len(prefix):] // "{etag}/{key}"
+			if slashIdx := strings.IndexByte(suffix, '/'); slashIdx >= 0 {
+				objKey := suffix[slashIdx+1:]
+				obj, err := e.store.GetObject(ctx, bucket, objKey)
+				if err == nil && obj != nil {
+					previousObjects[obj.Key] = obj
+				}
+			}
 		}
 	}
 
@@ -320,7 +339,7 @@ func (e *Engine) runIncrementalScan(ctx context.Context, scanID, bucket string) 
 		continuationToken = result.ContinuationToken
 	}
 
-	delta := e.computeDelta(ctx, previousKeysMap, seenKeys, currentKeys, bucket)
+	delta := e.computeDelta(previousObjects, seenKeys, currentKeys)
 
 	summary := agg.buildSummary()
 	scanResult := &store.ScanResult{
@@ -361,12 +380,12 @@ func (e *Engine) runIncrementalScan(ctx context.Context, scanID, bucket string) 
 	})
 }
 
-func (e *Engine) computeDelta(ctx context.Context, previousKeysMap map[string]bool, seenKeys map[string]bool, currentKeys map[string]*store.ObjectRecord, bucket string) *store.DeltaReport {
+func (e *Engine) computeDelta(previousObjects map[string]*store.ObjectRecord, seenKeys map[string]bool, currentKeys map[string]*store.ObjectRecord) *store.DeltaReport {
 	delta := &store.DeltaReport{}
 
 	for key := range seenKeys {
-		prevObj, err := e.store.GetObject(ctx, bucket, key)
-		if err != nil {
+		prevObj, existed := previousObjects[key]
+		if !existed {
 			delta.New++
 		} else {
 			currObj := currentKeys[key]
@@ -378,10 +397,11 @@ func (e *Engine) computeDelta(ctx context.Context, previousKeysMap map[string]bo
 		}
 	}
 
-	estimatedPreviousCount := int64(len(previousKeysMap))
-	delta.Deleted = estimatedPreviousCount - delta.Unchanged - delta.Modified
-	if delta.Deleted < 0 {
-		delta.Deleted = 0
+	// Deleted = objects that were in previous scan but not in current listing
+	for key := range previousObjects {
+		if !seenKeys[key] {
+			delta.Deleted++
+		}
 	}
 
 	return delta
