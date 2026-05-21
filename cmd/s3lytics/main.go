@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"log"
@@ -25,6 +26,7 @@ func main() {
 
 	fmt.Printf("S3lytics v%s starting on :%s\n", version, *port)
 	fmt.Printf("Data directory: %s\n", *dataDir)
+	_ = dataDir // used in Phase 2 when BadgerDB is wired in
 
 	r := chi.NewRouter()
 	r.Use(middleware.Logger)
@@ -53,7 +55,13 @@ func main() {
 
 	sig := <-quit
 	log.Printf("received signal %v, shutting down", sig)
-	srv.Close()
+
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	if err := srv.Shutdown(shutdownCtx); err != nil {
+		log.Printf("shutdown error: %v", err)
+	}
 }
 
 func defaultDataDir() string {
