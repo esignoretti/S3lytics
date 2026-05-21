@@ -14,35 +14,29 @@ const refreshThreshold = 5 * time.Minute
 type SessionManager struct {
 	mu    sync.Mutex
 	store store.Store
-	auth  *Service
 }
 
-func NewSessionManager(s store.Store, authService *Service) *SessionManager {
-	return &SessionManager{store: s, auth: authService}
+func NewSessionManager(s store.Store) *SessionManager {
+	return &SessionManager{store: s}
 }
 
 func (sm *SessionManager) IsLoggedIn(ctx context.Context) bool {
-	session, err := sm.store.GetSession(ctx)
-	if err != nil {
-		return false
-	}
-	return session.JWT != ""
+	_, err := sm.store.GetSession(ctx)
+	return err == nil
 }
 
-func (sm *SessionManager) SaveLogin(ctx context.Context, signinResp *IAMSigninResponse, account *IAMAccount) error {
-	session := &store.SessionData{
-		JWT:          signinResp.JWT,
-		RefreshToken: signinResp.RefreshToken,
+func (sm *SessionManager) SaveLogin(ctx context.Context, endpoint, region, accessKey, secretKey string) error {
+	data := &store.SessionData{
+		JWT:          accessKey,
+		RefreshToken: secretKey,
 		ExpiresAt:    time.Now().Add(24 * time.Hour),
 	}
-	if err := sm.store.SaveSession(ctx, session); err != nil {
+	if err := sm.store.SaveSession(ctx, data); err != nil {
 		return fmt.Errorf("save session: %w", err)
 	}
-
 	acct := &store.AccountData{
-		EndpointGateway: account.EndpointGateway,
-		Email:           account.Email,
-		UserID:          account.ID,
+		EndpointGateway: endpoint,
+		Email:           region,
 	}
 	if err := sm.store.SaveAccount(ctx, acct); err != nil {
 		return fmt.Errorf("save account: %w", err)
@@ -50,41 +44,13 @@ func (sm *SessionManager) SaveLogin(ctx context.Context, signinResp *IAMSigninRe
 	return nil
 }
 
-func (sm *SessionManager) GetValidJWT(ctx context.Context) (string, error) {
-	sm.mu.Lock()
-	defer sm.mu.Unlock()
-
-	session, err := sm.store.GetSession(ctx)
-	if err != nil {
-		return "", fmt.Errorf("no session: %w", err)
+func (sm *SessionManager) GetCredentials(ctx context.Context) (endpoint, region, accessKey, secretKey string, err error) {
+	session, sErr := sm.store.GetSession(ctx)
+	account, aErr := sm.store.GetAccount(ctx)
+	if sErr != nil || aErr != nil {
+		return "", "", "", "", fmt.Errorf("no saved credentials")
 	}
-
-	if time.Now().Add(refreshThreshold).After(session.ExpiresAt) {
-		return sm.refreshJWT(ctx, session)
-	}
-
-	return session.JWT, nil
-}
-
-func (sm *SessionManager) refreshJWT(ctx context.Context, session *store.SessionData) (string, error) {
-	account, err := sm.store.GetAccount(ctx)
-	if err != nil {
-		return "", fmt.Errorf("no account for refresh: %w", err)
-	}
-
-	forgeResp, err := sm.auth.ForgeJWT(ctx, account.UserID)
-	if err != nil {
-		sm.store.ClearAuth(ctx)
-		return "", fmt.Errorf("jwt refresh failed: %w", err)
-	}
-
-	session.JWT = forgeResp.JWT
-	session.ExpiresAt = time.Now().Add(24 * time.Hour)
-	if err := sm.store.SaveSession(ctx, session); err != nil {
-		return "", fmt.Errorf("save refreshed session: %w", err)
-	}
-
-	return forgeResp.JWT, nil
+	return account.EndpointGateway, account.Email, session.JWT, session.RefreshToken, nil
 }
 
 func (sm *SessionManager) Logout(ctx context.Context) error {

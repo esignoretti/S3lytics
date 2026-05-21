@@ -57,9 +57,8 @@ func main() {
 	}
 	defer badgerStore.Close()
 
-	// Initialize auth service and session manager
-	authService := auth.NewService(badgerStore)
-	sessionManager := auth.NewSessionManager(badgerStore, authService)
+	// Initialize session manager
+	sessionManager := auth.NewSessionManager(badgerStore)
 
 	// S3 client starts nil; created lazily after login
 	var s3Client s3.S3Client
@@ -76,7 +75,6 @@ func main() {
 	// Initialize HTTP handler
 	h := &handlers.Handler{
 		Store:          badgerStore,
-		AuthService:    authService,
 		SessionManager: sessionManager,
 		ScanEngine:     scanEngine,
 		S3Client:       s3Client,
