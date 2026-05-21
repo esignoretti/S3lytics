@@ -1,0 +1,34 @@
+# Binaries
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.out
+
+# Go
+*.test
+*.test.exe
+*.prof
+go.work
+
+# Dependencies
+vendor/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# S3lytics local data
+s3lytics-data/
+~/.s3lytics/
+
+# Build artifacts
+dist/
+build/
