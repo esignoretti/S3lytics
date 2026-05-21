@@ -1,12 +1,14 @@
 package auth
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"net/url"
 )
 
-func (s *Service) GetAccount(jwt string) (*IAMAccount, error) {
-	data, err := s.client.doRequest("GET", "/accounts/me", nil, jwt)
+func (s *Service) GetAccount(ctx context.Context, jwt string) (*IAMAccount, error) {
+	data, err := s.client.doRequest(ctx, "GET", "/accounts/me", nil, jwt)
 	if err != nil {
 		return nil, fmt.Errorf("get account: %w", err)
 	}
@@ -18,8 +20,8 @@ func (s *Service) GetAccount(jwt string) (*IAMAccount, error) {
 	return account, nil
 }
 
-func (s *Service) GetProjects(jwt string) ([]IAMProject, error) {
-	data, err := s.client.doRequest("GET", "/projects", nil, jwt)
+func (s *Service) GetProjects(ctx context.Context, jwt string) ([]IAMProject, error) {
+	data, err := s.client.doRequest(ctx, "GET", "/projects", nil, jwt)
 	if err != nil {
 		return nil, fmt.Errorf("get projects: %w", err)
 	}
@@ -31,9 +33,9 @@ func (s *Service) GetProjects(jwt string) ([]IAMProject, error) {
 	return projects, nil
 }
 
-func (s *Service) ForgeJWT(userID string) (*IAMForgeJWTResponse, error) {
-	path := fmt.Sprintf("/forge-jwt?user_id=%s", userID)
-	data, err := s.client.doRequest("GET", path, nil, "")
+func (s *Service) ForgeJWT(ctx context.Context, userID string) (*IAMForgeJWTResponse, error) {
+	path := "/forge-jwt?" + url.Values{"user_id": {userID}}.Encode()
+	data, err := s.client.doRequest(ctx, "GET", path, nil, "")
 	if err != nil {
 		return nil, fmt.Errorf("forge jwt: %w", err)
 	}
@@ -45,9 +47,9 @@ func (s *Service) ForgeJWT(userID string) (*IAMForgeJWTResponse, error) {
 	return resp, nil
 }
 
-func (s *Service) CreateApiKey(name, userID, iamJWT string) (*IAMApiKey, error) {
-	path := fmt.Sprintf("/keys/%s?user_id=%s", name, userID)
-	data, err := s.client.doRequest("POST", path, nil, iamJWT)
+func (s *Service) CreateApiKey(ctx context.Context, name, userID, iamJWT string) (*IAMApiKey, error) {
+	path := "/keys/" + url.PathEscape(name) + "?" + url.Values{"user_id": {userID}}.Encode()
+	data, err := s.client.doRequest(ctx, "POST", path, nil, iamJWT)
 	if err != nil {
 		return nil, fmt.Errorf("create api key: %w", err)
 	}

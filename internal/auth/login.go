@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
@@ -9,7 +10,7 @@ import (
 	"golang.org/x/crypto/ed25519"
 )
 
-func (s *Service) Login(req *LoginRequest) (*IAMSigninResponse, error) {
+func (s *Service) Login(ctx context.Context, req *LoginRequest) (*IAMSigninResponse, error) {
 	apiURL := req.APIURL
 	if apiURL == "" {
 		apiURL = "https://iam.cubbit.eu"
@@ -24,7 +25,7 @@ func (s *Service) Login(req *LoginRequest) (*IAMSigninResponse, error) {
 	}
 
 	challengeResp := &IAMChallengeResponse{}
-	data, err := s.client.doRequest("POST", "/challenge", challengeBody, "")
+	data, err := s.client.doRequest(ctx, "POST", "/challenge", challengeBody, "")
 	if err != nil {
 		return nil, fmt.Errorf("challenge request: %w", err)
 	}
@@ -55,7 +56,7 @@ func (s *Service) Login(req *LoginRequest) (*IAMSigninResponse, error) {
 	}
 
 	signinResp := &IAMSigninResponse{}
-	data, err = s.client.doRequest("POST", "/signin", signinBody, "")
+	data, err = s.client.doRequest(ctx, "POST", "/signin", signinBody, "")
 	if err != nil {
 		return nil, fmt.Errorf("signin request: %w", err)
 	}

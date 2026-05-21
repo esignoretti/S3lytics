@@ -3,6 +3,7 @@ package auth
 import (
 	"context"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/esignoretti/s3lytics/internal/store"
@@ -11,6 +12,7 @@ import (
 const refreshThreshold = 5 * time.Minute
 
 type SessionManager struct {
+	mu    sync.Mutex
 	store store.Store
 	auth  *Service
 }
@@ -49,6 +51,9 @@ func (sm *SessionManager) SaveLogin(ctx context.Context, signinResp *IAMSigninRe
 }
 
 func (sm *SessionManager) GetValidJWT(ctx context.Context) (string, error) {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+
 	session, err := sm.store.GetSession(ctx)
 	if err != nil {
 		return "", fmt.Errorf("no session: %w", err)
@@ -67,7 +72,7 @@ func (sm *SessionManager) refreshJWT(ctx context.Context, session *store.Session
 		return "", fmt.Errorf("no account for refresh: %w", err)
 	}
 
-	forgeResp, err := sm.auth.ForgeJWT(account.UserID)
+	forgeResp, err := sm.auth.ForgeJWT(ctx, account.UserID)
 	if err != nil {
 		sm.store.ClearAuth(ctx)
 		return "", fmt.Errorf("jwt refresh failed: %w", err)
