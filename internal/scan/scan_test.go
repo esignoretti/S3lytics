@@ -2,7 +2,9 @@ package scan
 
 import (
 	"context"
+	"fmt"
 	"os"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -12,7 +14,9 @@ import (
 )
 
 type mockS3Client struct {
-	objects []s3.ObjectInfo
+	objects            []s3.ObjectInfo
+	listPrefixesResult []string
+	listObjectsPageFn  func(ctx context.Context, bucket string, token *string) (*s3.ListResult, error)
 }
 
 func (m *mockS3Client) ListBuckets(ctx context.Context) ([]s3.BucketInfo, error) {
@@ -20,10 +24,16 @@ func (m *mockS3Client) ListBuckets(ctx context.Context) ([]s3.BucketInfo, error)
 }
 
 func (m *mockS3Client) ListPrefixes(ctx context.Context, bucket, prefix string) ([]string, error) {
+	if m.listPrefixesResult != nil {
+		return m.listPrefixesResult, nil
+	}
 	return nil, nil
 }
 
 func (m *mockS3Client) ListObjectsPage(ctx context.Context, bucket string, continuationToken *string) (*s3.ListResult, error) {
+	if m.listObjectsPageFn != nil {
+		return m.listObjectsPageFn(ctx, bucket, continuationToken)
+	}
 	return &s3.ListResult{
 		Objects:     m.objects,
 		IsTruncated: false,
@@ -76,16 +86,27 @@ func newTestStore(t *testing.T) *store.BadgerStore {
 	return s
 }
 
-func waitForScanComplete(t *testing.T, engine *Engine) {
+func waitForScanDone(t *testing.T, engine *Engine, expectedStatus ...string) {
 	t.Helper()
 	for i := 0; i < 100; i++ {
 		p := engine.GetProgress()
-		if p != nil && p.Status == "completed" {
-			return
+		if p != nil {
+			if len(expectedStatus) == 0 && (p.Status == "completed" || p.Status == "failed") {
+				return
+			}
+			for _, s := range expectedStatus {
+				if p.Status == s {
+					return
+				}
+			}
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	t.Fatal("scan did not complete within timeout")
+	p := engine.GetProgress()
+	if p != nil {
+		t.Fatalf("scan did not reach expected status within timeout (got %s)", p.Status)
+	}
+	t.Fatal("scan did not reach expected status within timeout (no progress)")
 }
 
 func TestFullScanBasic(t *testing.T) {
@@ -106,7 +127,7 @@ func TestFullScanBasic(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	waitForScanComplete(t, engine)
+	waitForScanDone(t, engine, "completed")
 
 	result, err := st.GetScanResult(ctx, scanID)
 	if err != nil {
@@ -141,7 +162,7 @@ func TestScanTypeBreakdown(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	waitForScanComplete(t, engine)
+	waitForScanDone(t, engine, "completed")
 
 	result, err := st.GetScanResult(ctx, scanID)
 	if err != nil {
@@ -167,7 +188,7 @@ func TestScanProgressTracking(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	waitForScanComplete(t, engine)
+	waitForScanDone(t, engine, "completed")
 
 	progress := engine.GetProgress()
 	if progress == nil {
@@ -198,7 +219,7 @@ func TestIncrementalScan(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	waitForScanComplete(t, engine)
+	waitForScanDone(t, engine, "completed")
 
 	// Change mock to return a modified set: keep a.txt (same etag), modify b.txt, add c.txt
 	mock.objects = []s3.ObjectInfo{
@@ -212,7 +233,7 @@ func TestIncrementalScan(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	waitForScanComplete(t, engine)
+	waitForScanDone(t, engine, "completed")
 
 	result, err := st.GetScanResult(ctx, scanID2)
 	if err != nil {
@@ -252,7 +273,7 @@ func TestIncrementalScanDeleted(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	waitForScanComplete(t, engine)
+	waitForScanDone(t, engine, "completed")
 
 	// Remove b.txt from the listing
 	mock.objects = []s3.ObjectInfo{
@@ -263,7 +284,7 @@ func TestIncrementalScanDeleted(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	waitForScanComplete(t, engine)
+	waitForScanDone(t, engine, "completed")
 
 	result, err := st.GetScanResult(ctx, scanID2)
 	if err != nil {
@@ -328,7 +349,7 @@ func TestConcurrentScanGuard(t *testing.T) {
 		t.Error("expected error for concurrent scan, got nil")
 	}
 
-	waitForScanComplete(t, engine)
+	waitForScanDone(t, engine, "completed")
 }
 
 func TestSetS3Client(t *testing.T) {
@@ -347,7 +368,7 @@ func TestSetS3Client(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	waitForScanComplete(t, engine)
+	waitForScanDone(t, engine, "completed")
 
 	result, err := st.GetScanResult(ctx, scanID)
 	if err != nil {
@@ -379,5 +400,74 @@ func TestSetConfigClamping(t *testing.T) {
 	}
 	if engine.config.BatchSize != 5000 {
 		t.Errorf("expected BatchSize clamped to 5000, got %d", engine.config.BatchSize)
+	}
+}
+
+func TestWorkerPoolMultiplePrefixes(t *testing.T) {
+	st := newTestStore(t)
+	mock := &mockS3Client{
+		listPrefixesResult: []string{"logs/", "media/"},
+		listObjectsPageFn: func(ctx context.Context, bucket string, token *string) (*s3.ListResult, error) {
+			// Return one object per prefix call so 2 prefixes × 1 object = 2 total
+			return &s3.ListResult{
+				Objects: []s3.ObjectInfo{
+					{Key: "a.txt", ETag: "e1", Size: 100, LastModified: time.Now()},
+				},
+				IsTruncated: false,
+			}, nil
+		},
+	}
+
+	engine := NewEngine(mock, st)
+	engine.SetConfig(Config{Workers: 2, BatchSize: 100, PrefixTimeout: 5 * time.Second})
+	ctx := context.Background()
+
+	scanID, err := engine.StartFullScan(ctx, "test-bucket")
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitForScanDone(t, engine, "completed")
+
+	result, err := st.GetScanResult(ctx, scanID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Summary.TotalObjects != 2 {
+		t.Errorf("expected 2 objects, got %d", result.Summary.TotalObjects)
+	}
+}
+
+func TestWorkerPoolErrorPropagation(t *testing.T) {
+	st := newTestStore(t)
+	var callCount atomic.Int32
+	mock := &mockS3Client{
+		listPrefixesResult: []string{"ok/", "fail/"},
+		listObjectsPageFn: func(ctx context.Context, bucket string, token *string) (*s3.ListResult, error) {
+			callCount.Add(1)
+			if callCount.Load() > 1 {
+				return nil, fmt.Errorf("simulated S3 error")
+			}
+			return &s3.ListResult{
+				Objects: []s3.ObjectInfo{
+					{Key: "ok/a.txt", ETag: "e1", Size: 100, LastModified: time.Now()},
+				},
+				IsTruncated: false,
+			}, nil
+		},
+	}
+
+	engine := NewEngine(mock, st)
+	engine.SetConfig(Config{Workers: 2, BatchSize: 100, PrefixTimeout: 5 * time.Second})
+	ctx := context.Background()
+
+	_, err := engine.StartFullScan(ctx, "test-bucket")
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitForScanDone(t, engine, "failed")
+
+	progress := engine.GetProgress()
+	if progress.Status != "failed" {
+		t.Errorf("expected scan to fail, got status %s", progress.Status)
 	}
 }
