@@ -25,6 +25,17 @@ type ScanProgress struct {
 	Error       string `json:"error,omitempty"`
 }
 
+type Config struct {
+	Workers       int
+	BatchSize     int
+	PrefixTimeout time.Duration
+}
+
+type collectorMsg struct {
+	obj *store.ObjectRecord
+	err error
+}
+
 type Engine struct {
 	client   s3.S3Client
 	store    store.Store
@@ -32,6 +43,7 @@ type Engine struct {
 	mu       sync.RWMutex
 	progress *ScanProgress
 	running  map[string]bool
+	config   Config
 }
 
 func NewEngine(client s3.S3Client, s store.Store) *Engine {
@@ -39,6 +51,11 @@ func NewEngine(client s3.S3Client, s store.Store) *Engine {
 		client:  client,
 		store:   s,
 		running: make(map[string]bool),
+		config: Config{
+			Workers:       4,
+			BatchSize:     500,
+			PrefixTimeout: 30 * time.Second,
+		},
 	}
 }
 
@@ -46,6 +63,34 @@ func (e *Engine) SetS3Client(client s3.S3Client) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.client = client
+}
+
+func (e *Engine) SetConfig(cfg Config) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if cfg.Workers < 1 {
+		cfg.Workers = 1
+	}
+	if cfg.Workers > 32 {
+		cfg.Workers = 32
+	}
+	if cfg.BatchSize < 100 {
+		cfg.BatchSize = 100
+	}
+	if cfg.BatchSize > 5000 {
+		cfg.BatchSize = 5000
+	}
+	if cfg.PrefixTimeout <= 0 {
+		cfg.PrefixTimeout = 30 * time.Second
+	}
+	e.config = cfg
+}
+
+func (e *Engine) saveObjectBatch(ctx context.Context, batch []*store.ObjectRecord, bucket string) error {
+	if len(batch) == 0 {
+		return nil
+	}
+	return e.store.SaveObjects(ctx, bucket, batch)
 }
 
 func (e *Engine) StartFullScan(ctx context.Context, bucket string) (string, error) {

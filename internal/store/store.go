@@ -28,6 +28,7 @@ type Store interface {
 	ClearAllBuckets(ctx context.Context) error
 
 	SaveObject(ctx context.Context, bucket string, obj *ObjectRecord) error
+	SaveObjects(ctx context.Context, bucket string, objects []*ObjectRecord) error
 	DeleteObject(ctx context.Context, bucket string, encodedKey string) error
 	ListObjectKeys(ctx context.Context, bucket string) ([]string, error)
 	GetObject(ctx context.Context, bucket string, encodedKey string) (*ObjectRecord, error)
@@ -283,6 +284,22 @@ func objectKey(bucket string, encodedKey string) []byte {
 func (s *BadgerStore) SaveObject(ctx context.Context, bucket string, obj *ObjectRecord) error {
 	key := objectKey(bucket, obj.ETag+"/"+obj.Key)
 	return s.set(ctx, key, obj)
+}
+
+func (s *BadgerStore) SaveObjects(ctx context.Context, bucket string, objects []*ObjectRecord) error {
+	return s.db.Update(func(txn *badger.Txn) error {
+		for _, obj := range objects {
+			key := objectKey(bucket, obj.ETag+"/"+obj.Key)
+			data, err := json.Marshal(obj)
+			if err != nil {
+				return fmt.Errorf("marshal object: %w", err)
+			}
+			if err := txn.Set(key, data); err != nil {
+				return fmt.Errorf("set object: %w", err)
+			}
+		}
+		return nil
+	})
 }
 
 func (s *BadgerStore) DeleteObject(ctx context.Context, bucket string, encodedKey string) error {

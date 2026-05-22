@@ -357,3 +357,27 @@ func TestSetS3Client(t *testing.T) {
 		t.Errorf("expected 1 object, got %d", result.Summary.TotalObjects)
 	}
 }
+
+func TestSetConfigClamping(t *testing.T) {
+	st := newTestStore(t)
+	engine := NewEngine(nil, st)
+
+	engine.SetConfig(Config{Workers: 0, BatchSize: 50, PrefixTimeout: 0})
+	if engine.config.Workers != 1 {
+		t.Errorf("expected Workers clamped to 1, got %d", engine.config.Workers)
+	}
+	if engine.config.BatchSize != 100 {
+		t.Errorf("expected BatchSize clamped to 100, got %d", engine.config.BatchSize)
+	}
+	if engine.config.PrefixTimeout != 30*time.Second {
+		t.Errorf("expected PrefixTimeout default 30s, got %v", engine.config.PrefixTimeout)
+	}
+
+	engine.SetConfig(Config{Workers: 100, BatchSize: 10000})
+	if engine.config.Workers != 32 {
+		t.Errorf("expected Workers clamped to 32, got %d", engine.config.Workers)
+	}
+	if engine.config.BatchSize != 5000 {
+		t.Errorf("expected BatchSize clamped to 5000, got %d", engine.config.BatchSize)
+	}
+}
