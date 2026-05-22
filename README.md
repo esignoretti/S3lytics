@@ -7,6 +7,7 @@ A single-user Go web application for analyzing Cubbit DS3 S3-compatible buckets.
 - **Cubbit IAM authentication** — challenge-response (Ed25519) with 2FA support via the Cubbit IAM API
 - **Project & bucket browser** — select your Cubbit project and browse its S3 buckets
 - **Full & incremental scans** — scan bucket contents with progress tracking and automatic delta detection
+- **Parallel scan engine** — prefix-based worker fan-out for faster bucket scanning; configurable workers, batch size, and timeout
 - **Deep scan analyzers** — duplicates, multipart uploads, access audit, encryption, versioning, large files, naming compliance, cost estimation, and virus scanning (ClamAV)
 - **Rich visual reports** — type/age/storage class breakdowns with Chart.js charts
 - **Bucket comparison** — compare two scans side by side
@@ -46,6 +47,11 @@ Open http://localhost:8080 and sign in with your Cubbit IAM credentials.
 |---|---|---|
 | `--port` | `8080` | HTTP server port |
 | `--data` | `~/.s3lytics/data` | BadgerDB data directory |
+| `--scan-workers` | `4` | Parallel prefix scanners (1-32) |
+| `--scan-batch-size` | `500` | Objects per DB write batch (100-5000) |
+| `--scan-prefix-timeout` | `30` | Prefix discovery timeout in seconds |
+
+Scan performance can also be adjusted at runtime via the Settings page.
 
 ## Architecture
 

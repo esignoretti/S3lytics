@@ -23,7 +23,7 @@ import (
 	"github.com/esignoretti/s3lytics/internal/web/handlers"
 )
 
-var version = "0.1.0-dev"
+var version = "0.2.0"
 
 func main() {
 	port := flag.String("port", "8080", "HTTP server port")
