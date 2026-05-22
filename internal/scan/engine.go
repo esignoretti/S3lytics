@@ -36,6 +36,11 @@ type collectorMsg struct {
 	err error
 }
 
+type pageResult struct {
+	page *s3.ListResult
+	err  error
+}
+
 type Engine struct {
 	client   s3.S3Client
 	store    store.Store
@@ -93,6 +98,137 @@ func (e *Engine) saveObjectBatch(ctx context.Context, batch []*store.ObjectRecor
 	return e.store.SaveObjects(ctx, bucket, batch)
 }
 
+func (e *Engine) discoverPrefixes(ctx context.Context, bucket string) ([]string, error) {
+	timeout := e.config.PrefixTimeout
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	prefixes, err := e.client.ListPrefixes(ctx, bucket, "")
+	if err != nil {
+		return nil, err
+	}
+	if len(prefixes) == 0 {
+		return []string{""}, nil
+	}
+	return prefixes, nil
+}
+
+func (e *Engine) runDispatcher(ctx context.Context, bucket string, prefixChan chan<- string) error {
+	prefixes, err := e.discoverPrefixes(ctx, bucket)
+	if err != nil {
+		log.Printf("scan: prefix discovery failed, using single prefix: %v", err)
+		prefixChan <- ""
+		return nil
+	}
+
+	for _, p := range prefixes {
+		select {
+		case prefixChan <- p:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	return nil
+}
+
+func (e *Engine) runWorker(ctx context.Context, bucket, prefix string, objChan chan<- collectorMsg) {
+	var continuationToken *string
+	isTruncated := true
+
+	for isTruncated {
+		if ctx.Err() != nil {
+			return
+		}
+
+		page, err := e.client.ListObjectsPage(ctx, bucket, continuationToken)
+		if err != nil {
+			objChan <- collectorMsg{err: err}
+			return
+		}
+
+		for _, obj := range page.Objects {
+			objChan <- collectorMsg{
+				obj: &store.ObjectRecord{
+					Key:          obj.Key,
+					ETag:         obj.ETag,
+					Size:         obj.Size,
+					LastModified: obj.LastModified,
+					StorageClass: obj.StorageClass,
+				},
+			}
+		}
+
+		isTruncated = page.IsTruncated
+		continuationToken = page.ContinuationToken
+	}
+}
+
+func (e *Engine) runCollector(ctx context.Context, scanID, bucket string, objChan <-chan collectorMsg, previousObjects map[string]*store.ObjectRecord) (*statsAggregator, *store.DeltaReport, error) {
+	agg := newStatsAggregator()
+	batch := make([]*store.ObjectRecord, 0, e.config.BatchSize)
+	startTime := time.Now()
+
+	var seenKeys map[string]bool
+	var currentKeys map[string]*store.ObjectRecord
+	if previousObjects != nil {
+		seenKeys = make(map[string]bool)
+		currentKeys = make(map[string]*store.ObjectRecord)
+	}
+
+	flushBatch := func() error {
+		if len(batch) == 0 {
+			return nil
+		}
+		for _, obj := range batch {
+			agg.addObject(s3.ObjectInfo{
+				Key:          obj.Key,
+				ETag:         obj.ETag,
+				Size:         obj.Size,
+				LastModified: obj.LastModified,
+				StorageClass: obj.StorageClass,
+			})
+		}
+		if err := e.saveObjectBatch(ctx, batch, bucket); err != nil {
+			return err
+		}
+		e.updateProgress(scanID, agg.totalObjects, time.Since(startTime))
+		batch = batch[:0]
+		return nil
+	}
+
+	for {
+		select {
+		case msg, ok := <-objChan:
+			if !ok {
+				if err := flushBatch(); err != nil {
+					return nil, nil, err
+				}
+				var delta *store.DeltaReport
+				if previousObjects != nil {
+					delta = e.computeDelta(previousObjects, seenKeys, currentKeys)
+				}
+				return agg, delta, nil
+			}
+			if msg.err != nil {
+				return nil, nil, msg.err
+			}
+			msg.obj.ScanID = scanID
+			batch = append(batch, msg.obj)
+			if seenKeys != nil {
+				seenKeys[msg.obj.Key] = true
+				currentKeys[msg.obj.Key] = msg.obj
+			}
+			if len(batch) >= e.config.BatchSize {
+				if err := flushBatch(); err != nil {
+					return nil, nil, err
+				}
+			}
+		case <-ctx.Done():
+			return nil, nil, ctx.Err()
+		}
+	}
+}
+
 func (e *Engine) StartFullScan(ctx context.Context, bucket string) (string, error) {
 	e.mu.Lock()
 	if e.client == nil {
@@ -141,52 +277,52 @@ func (e *Engine) runFullScan(ctx context.Context, scanID, bucket string) {
 		e.mu.Unlock()
 	}()
 
-	agg := newStatsAggregator()
-	var continuationToken *string
-	totalFound := int64(0)
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	prefixChan := make(chan string, e.config.Workers)
+	objChan := make(chan collectorMsg, 1000)
 	startTime := time.Now()
 
-	for {
-		if ctx.Err() != nil {
-			e.failScan(scanID, ctx.Err().Error())
-			return
+	type collResult struct {
+		agg   *statsAggregator
+		delta *store.DeltaReport
+		err   error
+	}
+	collCh := make(chan collResult, 1)
+	go func() {
+		agg, delta, err := e.runCollector(ctx, scanID, bucket, objChan, nil)
+		collCh <- collResult{agg, delta, err}
+	}()
+
+	go func() {
+		if err := e.runDispatcher(ctx, bucket, prefixChan); err != nil {
+			objChan <- collectorMsg{err: err}
 		}
+		close(prefixChan)
+	}()
 
-		var page *s3.ListResult
-		pageErr := retryWithBackoff(ctx, "ListObjectsPage", func() error {
-			var rErr error
-			page, rErr = e.client.ListObjectsPage(ctx, bucket, continuationToken)
-			return rErr
-		})
-		if pageErr != nil {
-			e.failScan(scanID, fmt.Sprintf("list objects: %v", pageErr))
-			return
-		}
-		result := page
-
-		for _, obj := range result.Objects {
-			agg.addObject(obj)
-			atomic.AddInt64(&totalFound, 1)
-
-			objRecord := &store.ObjectRecord{
-				Key:          obj.Key,
-				ETag:         obj.ETag,
-				Size:         obj.Size,
-				LastModified: obj.LastModified,
-				StorageClass: obj.StorageClass,
-				ScanID:       scanID,
+	var wg sync.WaitGroup
+	for i := 0; i < e.config.Workers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for prefix := range prefixChan {
+				e.runWorker(ctx, bucket, prefix, objChan)
 			}
-			_ = e.store.SaveObject(ctx, bucket, objRecord)
-		}
-
-		e.updateProgress(scanID, atomic.LoadInt64(&totalFound), time.Since(startTime))
-
-		if !result.IsTruncated {
-			break
-		}
-		continuationToken = result.ContinuationToken
+		}()
 	}
 
+	wg.Wait()
+	close(objChan)
+
+	result := <-collCh
+	if result.err != nil {
+		e.failScan(scanID, fmt.Sprintf("scan failed: %v", result.err))
+		return
+	}
+
+	agg := result.agg
 	summary := agg.buildSummary()
 	scanResult := &store.ScanResult{
 		Record: store.ScanRecord{
@@ -213,15 +349,14 @@ func (e *Engine) runFullScan(ctx context.Context, scanID, bucket string) {
 	record.Status = "completed"
 	record.Duration = time.Since(startTime).String()
 	_ = e.store.SaveScan(ctx, record)
-
 	_ = e.store.AddScanToBucketIndex(ctx, bucket, scanID)
 
 	e.setProgress(&ScanProgress{
 		ScanID:      scanID,
 		Bucket:      bucket,
 		Status:      "completed",
-		ObjectsDone: totalFound,
-		TotalFound:  totalFound,
+		ObjectsDone: summary.TotalObjects,
+		TotalFound:  summary.TotalObjects,
 		Elapsed:     time.Since(startTime).String(),
 	})
 }
