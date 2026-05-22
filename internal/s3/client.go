@@ -41,6 +41,7 @@ type S3Client interface {
 	GetBucketEncryption(ctx context.Context, bucket string) (*types.ServerSideEncryptionConfiguration, error)
 	ListObjectVersions(ctx context.Context, bucket string) ([]types.ObjectVersion, []types.DeleteMarkerEntry, error)
 	GetObject(ctx context.Context, bucket, key string, rangeSpec *string) ([]byte, error)
+	ListPrefixes(ctx context.Context, bucket, prefix string) ([]string, error)
 }
 
 type CubbitS3Client struct {

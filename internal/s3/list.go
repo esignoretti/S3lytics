@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 )
 
@@ -57,4 +58,22 @@ func (c *CubbitS3Client) ListObjectsPage(ctx context.Context, bucket string, con
 		ContinuationToken: resp.NextContinuationToken,
 		IsTruncated:       *resp.IsTruncated,
 	}, nil
+}
+
+func (c *CubbitS3Client) ListPrefixes(ctx context.Context, bucket, prefix string) ([]string, error) {
+	input := &s3.ListObjectsV2Input{
+		Bucket:    &bucket,
+		Prefix:    &prefix,
+		Delimiter: aws.String("/"),
+		MaxKeys:   aws.Int32(1000),
+	}
+	resp, err := c.client.ListObjectsV2(ctx, input)
+	if err != nil {
+		return nil, fmt.Errorf("list prefixes: %w", err)
+	}
+	prefixes := make([]string, 0, len(resp.CommonPrefixes))
+	for _, cp := range resp.CommonPrefixes {
+		prefixes = append(prefixes, *cp.Prefix)
+	}
+	return prefixes, nil
 }
