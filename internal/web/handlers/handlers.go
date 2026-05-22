@@ -612,6 +612,12 @@ func (h *Handler) GetComparison(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) GetSettings(w http.ResponseWriter, r *http.Request) {
 	settings := h.loadSettings()
 
+	h.ScanEngine.SetConfig(scan.Config{
+		Workers:       settings.ScanWorkers,
+		BatchSize:     settings.ScanBatchSize,
+		PrefixTimeout: time.Duration(settings.ScanPrefixTimeoutSec) * time.Second,
+	})
+
 	ctx := context.Background()
 	acct, _ := h.Store.GetAccount(ctx)
 	email := ""
@@ -650,6 +656,16 @@ func (h *Handler) PostSettings(w http.ResponseWriter, r *http.Request) {
 		settings.LargeFileThresholdMB = threshold
 	}
 
+	if workers, err := strconv.Atoi(r.FormValue("scan_workers")); err == nil && workers >= 1 && workers <= 32 {
+		settings.ScanWorkers = workers
+	}
+	if batchSize, err := strconv.Atoi(r.FormValue("scan_batch_size")); err == nil && batchSize >= 100 && batchSize <= 5000 {
+		settings.ScanBatchSize = batchSize
+	}
+	if timeout, err := strconv.Atoi(r.FormValue("scan_prefix_timeout")); err == nil && timeout >= 10 && timeout <= 120 {
+		settings.ScanPrefixTimeoutSec = timeout
+	}
+
 	for class := range settings.CostRates {
 		if val := r.FormValue("cost_" + class); val != "" {
 			if rate, err := strconv.ParseFloat(val, 64); err == nil {
@@ -673,22 +689,31 @@ func (h *Handler) PostSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = h.Store.SaveScanResult(context.Background(), settingsRecord)
 
+	h.ScanEngine.SetConfig(scan.Config{
+		Workers:       settings.ScanWorkers,
+		BatchSize:     settings.ScanBatchSize,
+		PrefixTimeout: time.Duration(settings.ScanPrefixTimeoutSec) * time.Second,
+	})
+
 	http.Redirect(w, r, "/settings", http.StatusSeeOther)
 }
 
 func (h *Handler) loadSettings() *web.SettingsData {
 	return &web.SettingsData{
-		ClamdSocket:         "/var/run/clamav/clamd.sock",
-		DeepDuplicates:      true,
-		DeepMultipart:       true,
-		DeepAccess:          true,
-		DeepEncryption:      true,
-		DeepVersioning:      true,
-		DeepLargeFiles:      true,
-		DeepNaming:          true,
-		DeepCost:            true,
-		NamingPattern:       "",
+		ClamdSocket:          "/var/run/clamav/clamd.sock",
+		DeepDuplicates:       true,
+		DeepMultipart:        true,
+		DeepAccess:           true,
+		DeepEncryption:       true,
+		DeepVersioning:       true,
+		DeepLargeFiles:       true,
+		DeepNaming:           true,
+		DeepCost:             true,
+		NamingPattern:        "",
 		LargeFileThresholdMB: 100,
+		ScanWorkers:          4,
+		ScanBatchSize:        500,
+		ScanPrefixTimeoutSec: 30,
 		CostRates: map[string]float64{
 			"STANDARD":                  0.023,
 			"INTELLIGENT_TIERING":       0.023,

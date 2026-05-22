@@ -60,6 +60,9 @@ type SettingsData struct {
 	NamingPattern        string
 	LargeFileThresholdMB int64
 	CostRates            map[string]float64
+	ScanWorkers          int     `json:"scan_workers"`
+	ScanBatchSize        int     `json:"scan_batch_size"`
+	ScanPrefixTimeoutSec int     `json:"scan_prefix_timeout"`
 }
 
 type TemplateRenderer struct {

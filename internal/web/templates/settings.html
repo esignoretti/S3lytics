@@ -52,6 +52,29 @@
         {{end}}
     </div>
 
+    <div class="card settings-section">
+        <h2>Scan Performance</h2>
+        <div class="form-group">
+            <label for="scan_workers">Parallel Workers</label>
+            <input type="range" id="scan_workers" name="scan_workers"
+                   min="1" max="32" value="{{.Settings.ScanWorkers}}"
+                   oninput="document.getElementById('scan_workers_val').textContent=this.value">
+            <span id="scan_workers_val" style="margin-left:0.5rem;font-weight:700;">{{.Settings.ScanWorkers}}</span>
+        </div>
+        <div class="form-group">
+            <label for="scan_batch_size">DB Batch Size (objects)</label>
+            <input type="number" id="scan_batch_size" name="scan_batch_size"
+                   value="{{.Settings.ScanBatchSize}}" min="100" max="5000" step="100">
+            <span class="form-help">Higher = fewer transactions, more memory</span>
+        </div>
+        <div class="form-group">
+            <label for="scan_prefix_timeout">Prefix Discovery Timeout (seconds)</label>
+            <input type="number" id="scan_prefix_timeout" name="scan_prefix_timeout"
+                   value="{{.Settings.ScanPrefixTimeoutSec}}" min="10" max="120">
+            <span class="form-help">If timeout expires, falls back to single-prefix mode</span>
+        </div>
+    </div>
+
     <button type="submit" class="btn">Save Settings</button>
 </form>
 {{end}}
