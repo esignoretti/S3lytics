@@ -28,6 +28,9 @@ var version = "0.1.0-dev"
 func main() {
 	port := flag.String("port", "8080", "HTTP server port")
 	dataDir := flag.String("data", defaultDataDir(), "BadgerDB data directory")
+	scanWorkers := flag.Int("scan-workers", 4, "Parallel prefix scanners (1-32)")
+	scanBatchSize := flag.Int("scan-batch-size", 500, "Objects per DB write batch (100-5000)")
+	scanPrefixTimeout := flag.Int("scan-prefix-timeout", 30, "Prefix discovery timeout in seconds")
 	flag.Parse()
 
 	log.SetFlags(log.Ldate | log.Ltime | log.Lshortfile)
@@ -100,6 +103,12 @@ func main() {
 	r.Use(middleware.Timeout(60 * time.Second))
 	r.Use(authMiddleware(sessionManager))
 
+	h.ScanEngine.SetConfig(scan.Config{
+		Workers:       clamp(*scanWorkers, 1, 32),
+		BatchSize:     clamp(*scanBatchSize, 100, 5000),
+		PrefixTimeout: time.Duration(clamp(*scanPrefixTimeout, 10, 120)) * time.Second,
+	})
+
 	h.RegisterRoutes(r)
 
 	// Rebuild per-project S3 clients from cached credentials so the app is
@@ -159,4 +168,14 @@ func defaultDataDir() string {
 		return "./s3lytics-data"
 	}
 	return home + "/.s3lytics/data"
+}
+
+func clamp(v, min, max int) int {
+	if v < min {
+		return min
+	}
+	if v > max {
+		return max
+	}
+	return v
 }
