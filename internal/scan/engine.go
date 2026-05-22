@@ -7,7 +7,6 @@ import (
 	"math/rand"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/esignoretti/s3lytics/internal/s3"
@@ -449,14 +448,12 @@ func (e *Engine) runIncrementalScan(ctx context.Context, scanID, bucket string) 
 	}()
 
 	// Load all previous object keys and build a map of key -> previous object
-	// ListObjectKeys returns full Badger keys: "objects/{bucket}/{etag}/{key}"
 	previousKeys, _ := e.store.ListObjectKeys(ctx, bucket)
 	previousObjects := make(map[string]*store.ObjectRecord)
 	for _, k := range previousKeys {
-		// Extract object key from "objects/{bucket}/{etag}/{key}"
 		prefix := "objects/" + bucket + "/"
 		if len(k) > len(prefix) {
-			suffix := k[len(prefix):] // "{etag}/{key}"
+			suffix := k[len(prefix):]
 			if slashIdx := strings.IndexByte(suffix, '/'); slashIdx >= 0 {
 				objKey := suffix[slashIdx+1:]
 				obj, err := e.store.GetObject(ctx, bucket, objKey)
@@ -467,60 +464,52 @@ func (e *Engine) runIncrementalScan(ctx context.Context, scanID, bucket string) 
 		}
 	}
 
-	agg := newStatsAggregator()
-	var continuationToken *string
-	totalFound := int64(0)
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	prefixChan := make(chan string, e.config.Workers)
+	objChan := make(chan collectorMsg, 1000)
 	startTime := time.Now()
 
-	seenKeys := make(map[string]bool)
-	currentKeys := make(map[string]*store.ObjectRecord)
+	type collResult struct {
+		agg   *statsAggregator
+		delta *store.DeltaReport
+		err   error
+	}
+	collCh := make(chan collResult, 1)
+	go func() {
+		agg, delta, err := e.runCollector(ctx, scanID, bucket, objChan, previousObjects)
+		collCh <- collResult{agg, delta, err}
+	}()
 
-	for {
-		if ctx.Err() != nil {
-			e.failScan(scanID, ctx.Err().Error())
-			return
+	go func() {
+		if err := e.runDispatcher(ctx, bucket, prefixChan); err != nil {
+			objChan <- collectorMsg{err: err}
 		}
+		close(prefixChan)
+	}()
 
-		var page *s3.ListResult
-		pageErr := retryWithBackoff(ctx, "ListObjectsPage", func() error {
-			var rErr error
-			page, rErr = e.client.ListObjectsPage(ctx, bucket, continuationToken)
-			return rErr
-		})
-		if pageErr != nil {
-			e.failScan(scanID, fmt.Sprintf("list objects: %v", pageErr))
-			return
-		}
-		result := page
-
-		for _, obj := range result.Objects {
-			agg.addObject(obj)
-			atomic.AddInt64(&totalFound, 1)
-
-			objRecord := &store.ObjectRecord{
-				Key:          obj.Key,
-				ETag:         obj.ETag,
-				Size:         obj.Size,
-				LastModified: obj.LastModified,
-				StorageClass: obj.StorageClass,
-				ScanID:       scanID,
+	var wg sync.WaitGroup
+	for i := 0; i < e.config.Workers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for prefix := range prefixChan {
+				e.runWorker(ctx, bucket, prefix, objChan)
 			}
-			_ = e.store.SaveObject(ctx, bucket, objRecord)
-
-			seenKeys[obj.Key] = true
-			currentKeys[obj.Key] = objRecord
-		}
-
-		e.updateProgress(scanID, atomic.LoadInt64(&totalFound), time.Since(startTime))
-
-		if !result.IsTruncated {
-			break
-		}
-		continuationToken = result.ContinuationToken
+		}()
 	}
 
-	delta := e.computeDelta(previousObjects, seenKeys, currentKeys)
+	wg.Wait()
+	close(objChan)
 
+	result := <-collCh
+	if result.err != nil {
+		e.failScan(scanID, fmt.Sprintf("scan failed: %v", result.err))
+		return
+	}
+
+	agg := result.agg
 	summary := agg.buildSummary()
 	scanResult := &store.ScanResult{
 		Record: store.ScanRecord{
@@ -536,7 +525,7 @@ func (e *Engine) runIncrementalScan(ctx context.Context, scanID, bucket string) 
 		Ages:     agg.buildAges(),
 		Storage:  agg.buildStorage(),
 		Prefixes: agg.buildPrefixes(),
-		Delta:    delta,
+		Delta:    result.delta,
 	}
 
 	if err := e.store.SaveScanResult(ctx, scanResult); err != nil {
@@ -554,8 +543,8 @@ func (e *Engine) runIncrementalScan(ctx context.Context, scanID, bucket string) 
 		ScanID:      scanID,
 		Bucket:      bucket,
 		Status:      "completed",
-		ObjectsDone: totalFound,
-		TotalFound:  totalFound,
+		ObjectsDone: summary.TotalObjects,
+		TotalFound:  summary.TotalObjects,
 		Elapsed:     time.Since(startTime).String(),
 	})
 }
