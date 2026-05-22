@@ -8,6 +8,8 @@ import (
 	"log"
 	"net/http"
 	"strconv"
+	"strings"
+	"sync"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -21,11 +23,29 @@ import (
 
 type Handler struct {
 	Store          store.Store
+	AuthService    *auth.Service
 	SessionManager *auth.SessionManager
 	ScanEngine     *scan.Engine
-	S3Client       s3.S3Client
 	Renderer       *web.TemplateRenderer
 	DeepConfig     deep.Config
+
+	mu        sync.RWMutex
+	s3Clients map[string]s3.S3Client // projectID -> client
+}
+
+func (h *Handler) setS3Client(projectID string, c s3.S3Client) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.s3Clients == nil {
+		h.s3Clients = map[string]s3.S3Client{}
+	}
+	h.s3Clients[projectID] = c
+}
+
+func (h *Handler) s3ClientFor(projectID string) s3.S3Client {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	return h.s3Clients[projectID]
 }
 
 func (h *Handler) RegisterRoutes(r chi.Router) {
@@ -63,36 +83,68 @@ func (h *Handler) PostLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	endpoint := r.FormValue("endpoint")
-	region := r.FormValue("region")
-	accessKey := r.FormValue("access_key")
-	secretKey := r.FormValue("secret_key")
-
-	if endpoint == "" || accessKey == "" || secretKey == "" {
-		renderLogin(w, h.Renderer, "Endpoint, Access Key, and Secret Key are required")
-		return
-	}
-	if region == "" {
-		region = "us-east-1"
+	loginReq := &auth.LoginRequest{
+		Email:    r.FormValue("email"),
+		Password: r.FormValue("password"),
+		TfaCode:  r.FormValue("tfa_code"),
+		TenantID: r.FormValue("tenant_id"),
+		APIURL:   r.FormValue("api_url"),
 	}
 
 	ctx := context.Background()
 
-	s3Client, err := s3.NewCubbitS3Client(endpoint, region, accessKey, secretKey)
+	signinResp, err := h.AuthService.Login(ctx, loginReq)
 	if err != nil {
-		log.Printf("S3 client creation failed: %v", err)
-		renderLogin(w, h.Renderer, fmt.Sprintf("Failed to create S3 client: %v", err))
+		log.Printf("login failed: %v", err)
+		renderLogin(w, h.Renderer, fmt.Sprintf("Login failed: %v", err))
 		return
 	}
 
-	if err := h.SessionManager.SaveLogin(ctx, endpoint, region, accessKey, secretKey); err != nil {
+	account, err := h.AuthService.GetAccount(ctx, signinResp.Token)
+	if err != nil {
+		log.Printf("get account failed: %v", err)
+		renderLogin(w, h.Renderer, "Failed to retrieve account")
+		return
+	}
+
+	coordinatorURL := loginReq.APIURL
+	if coordinatorURL == "" {
+		coordinatorURL = "https://api.eu00wi.cubbit.services"
+	}
+	if err := h.SessionManager.SaveLogin(ctx, signinResp, account, coordinatorURL); err != nil {
 		log.Printf("save login failed: %v", err)
 		renderLogin(w, h.Renderer, "Failed to save session")
 		return
 	}
 
-	h.S3Client = s3Client
-	h.ScanEngine.SetS3Client(s3Client)
+	projects, err := h.AuthService.GetProjects(ctx, signinResp.Token)
+	if err != nil {
+		log.Printf("get projects failed (will continue): %v", err)
+	} else {
+		storeProjects := make([]store.Project, len(projects))
+		for i, p := range projects {
+			storeProjects[i] = store.Project{ID: p.ID, Name: p.Name}
+		}
+		h.Store.SaveProjects(ctx, storeProjects)
+
+		if len(projects) > 0 && account.EndpointGateway != "" {
+			log.Printf("auth flow: starting forge/keyvault chain over %d projects", len(projects))
+			for _, p := range projects {
+				log.Printf("auth flow: project %q id=%s users=%d", p.Name, p.ID, len(p.Users))
+			}
+
+			// Wipe stale per-project bucket entries from previous (buggy)
+			// runs so we don't serve cross-project ghosts.
+			if err := h.Store.ClearAllBuckets(ctx); err != nil {
+				log.Printf("auth flow: clear buckets failed: %v", err)
+			}
+
+			creds := h.loadOrCreateS3Credentials(ctx, projects)
+			log.Printf("auth flow: got credentials for %d/%d projects", len(creds), len(projects))
+
+			h.initS3ClientsForProjects(ctx, account.EndpointGateway, creds)
+		}
+	}
 
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
@@ -102,9 +154,203 @@ func (h *Handler) PostLogout(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/login", http.StatusSeeOther)
 }
 
+// loadOrCreateS3Credentials walks every project and tries to obtain a
+// usable (api_key, secret_key) pair per project. For each IAM user in a
+// project it reconciles local persistence with the remote keyvault, mirroring
+// Swift's DS3SDK.loadOrCreateDS3APIKeys:
+//
+//  1. Local cache + matching remote → reuse cache (the only source of secret).
+//  2. Remote orphan with our name but no local cache → delete it.
+//  3. Stale local cache with no matching remote → drop it.
+//  4. Create a new key, persist it locally.
+//
+// Returns a map keyed by projectID.
+func (h *Handler) loadOrCreateS3Credentials(ctx context.Context, projects []auth.IAMProject) map[string]*store.S3Credential {
+	result := map[string]*store.S3Credential{}
+	for _, p := range projects {
+		log.Printf("auth flow: project %s users=%d", p.Name, len(p.Users))
+		for _, u := range p.Users {
+			cred := h.reconcileProjectCredential(ctx, p, u)
+			if cred != nil {
+				result[p.ID] = cred
+				break // one credential per project is enough
+			}
+		}
+	}
+	return result
+}
+
+func (h *Handler) reconcileProjectCredential(ctx context.Context, p auth.IAMProject, u auth.IAMUser) *store.S3Credential {
+	keyName := s3KeyName(u.UserName, p.Name)
+
+	forgeResp, err := h.AuthService.ForgeJWT(ctx, u.UserID)
+	_ = h.SessionManager.SyncRefreshToken(ctx)
+	if err != nil {
+		log.Printf("auth flow: forge for user %s failed: %v", u.UserName, err)
+		return nil
+	}
+
+	remote, err := h.AuthService.ListApiKeys(ctx, u.UserID, forgeResp.Token)
+	if err != nil {
+		log.Printf("auth flow: list keys for %s failed: %v", u.UserName, err)
+		return nil
+	}
+
+	cached, _ := h.Store.GetS3Credential(ctx, keyName)
+	var remoteMatch *auth.IAMApiKey
+	for i := range remote {
+		if remote[i].Name == keyName {
+			remoteMatch = &remote[i]
+			break
+		}
+	}
+
+	if cached != nil && remoteMatch != nil && cached.ApiKey == remoteMatch.ApiKey {
+		log.Printf("auth flow: reusing cached key %s", keyName)
+		return cached
+	}
+
+	if remoteMatch != nil {
+		log.Printf("auth flow: deleting orphan remote key %s (no local secret)", keyName)
+		if delErr := h.AuthService.DeleteApiKey(ctx, remoteMatch.ApiKey, u.UserID, forgeResp.Token); delErr != nil {
+			log.Printf("auth flow: delete orphan failed: %v", delErr)
+		}
+	}
+	if cached != nil && remoteMatch == nil {
+		_ = h.Store.DeleteS3Credential(ctx, keyName)
+	}
+
+	var created *auth.IAMApiKey
+	for attempt := 1; attempt <= 3; attempt++ {
+		c, err := h.AuthService.CreateApiKey(ctx, keyName, u.UserID, forgeResp.Token)
+		if err == nil && c != nil && c.SecretKey != "" {
+			created = c
+			break
+		}
+		log.Printf("auth flow: create key %s attempt %d failed: %v (secret_empty=%v)", keyName, attempt, err, c != nil && c.SecretKey == "")
+		time.Sleep(time.Duration(attempt) * 400 * time.Millisecond)
+	}
+	if created == nil {
+		return nil
+	}
+	cred := &store.S3Credential{
+		Name:      keyName,
+		ApiKey:    created.ApiKey,
+		SecretKey: created.SecretKey,
+		UserID:    u.UserID,
+		ProjectID: p.ID,
+	}
+	_ = h.Store.SaveS3Credential(ctx, cred)
+	log.Printf("auth flow: created and cached key %s", keyName)
+	return cred
+}
+
+func s3KeyName(userName, projectName string) string {
+	safe := func(s string) string {
+		s = strings.ToLower(s)
+		s = strings.ReplaceAll(s, " ", "_")
+		return s
+	}
+	return "s3lytics-" + safe(userName) + "-" + safe(projectName)
+}
+
+// initS3ClientsForProjects creates one S3 client per project using that
+// project's credentials, then lists each project's buckets and persists them
+// under that project's ID. If a project's own credential fails, falls back
+// to the first working credential from another project.
+func (h *Handler) initS3ClientsForProjects(ctx context.Context, endpoint string, creds map[string]*store.S3Credential) {
+	var fallbackCred *store.S3Credential
+	for _, c := range creds {
+		if c.ApiKey != "" && c.SecretKey != "" {
+			fallbackCred = c
+			break
+		}
+	}
+
+	for projectID, c := range creds {
+		if projectID == "" {
+			continue
+		}
+		cred := c
+		if cred.ApiKey == "" || cred.SecretKey == "" {
+			cred = fallbackCred
+		}
+		if cred == nil || cred.ApiKey == "" || cred.SecretKey == "" {
+			log.Printf("auth flow: no credentials for project %s", projectID)
+			continue
+		}
+		client, err := s3.NewCubbitS3Client(endpoint, "us-east-1", cred.ApiKey, cred.SecretKey)
+		if err != nil {
+			log.Printf("create s3 client for project %s: %v", projectID, err)
+			continue
+		}
+		h.setS3Client(projectID, client)
+
+		buckets, err := h.listBucketsWithRetry(ctx, client, projectID)
+		if err != nil {
+			log.Printf("list buckets for project %s: %v", projectID, err)
+			continue
+		}
+		storeBuckets := make([]store.Bucket, len(buckets))
+		bucketNames := make([]string, 0, len(buckets))
+		for i, b := range buckets {
+			storeBuckets[i] = store.Bucket{Name: b.Name, CreationDate: b.CreationDate.Format(time.RFC3339)}
+			if len(bucketNames) < 5 {
+				bucketNames = append(bucketNames, b.Name)
+			}
+		}
+		if err := h.Store.SaveBuckets(ctx, projectID, storeBuckets); err != nil {
+			log.Printf("save buckets for project %s: %v", projectID, err)
+			continue
+		}
+		log.Printf("auth flow: project %s -> %d buckets (sample: %v)", projectID, len(buckets), bucketNames)
+	}
+}
+
+func (h *Handler) listBucketsWithRetry(ctx context.Context, client s3.S3Client, projectID string) ([]s3.BucketInfo, error) {
+	var lastErr error
+	for attempt := 1; attempt <= 3; attempt++ {
+		buckets, err := client.ListBuckets(ctx)
+		if err == nil {
+			return buckets, nil
+		}
+		lastErr = err
+		log.Printf("auth flow: list buckets project %s attempt %d failed: %v", projectID, attempt, err)
+		time.Sleep(time.Duration(attempt) * 500 * time.Millisecond)
+	}
+	return nil, lastErr
+}
+
+// RestoreS3Clients rebuilds per-project S3 clients from cached credentials
+// after an app restart. Call once at startup.
+func (h *Handler) RestoreS3Clients(ctx context.Context) {
+	acct, err := h.Store.GetAccount(ctx)
+	if err != nil || acct == nil || acct.EndpointGateway == "" {
+		return
+	}
+	creds, err := h.Store.ListS3Credentials(ctx)
+	if err != nil {
+		return
+	}
+	for _, c := range creds {
+		if c.ProjectID == "" || c.ApiKey == "" || c.SecretKey == "" {
+			continue
+		}
+		client, err := s3.NewCubbitS3Client(acct.EndpointGateway, "us-east-1", c.ApiKey, c.SecretKey)
+		if err != nil {
+			log.Printf("restore s3 client for project %s: %v", c.ProjectID, err)
+			continue
+		}
+		h.setS3Client(c.ProjectID, client)
+	}
+}
+
 func (h *Handler) GetDashboard(w http.ResponseWriter, r *http.Request) {
 	ctx := context.Background()
-	projects, _ := h.Store.GetProjects(ctx)
+	projects, err := h.Store.GetProjects(ctx)
+	if err != nil {
+		log.Printf("get projects from store: %v", err)
+	}
 
 	acct, _ := h.Store.GetAccount(ctx)
 	email := ""
@@ -124,19 +370,24 @@ func (h *Handler) GetDashboard(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) GetBucketsJSON(w http.ResponseWriter, r *http.Request) {
 	projectID := r.URL.Query().Get("project")
 	if projectID == "" {
-		http.Error(w, "missing project", http.StatusBadRequest)
+		w.Header().Set("Content-Type", "text/html")
+		w.Write([]byte(`<option value="">Select a project first...</option>`))
 		return
 	}
 
 	buckets, err := h.Store.GetBuckets(context.Background(), projectID)
 	if err != nil || len(buckets) == 0 {
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode([]store.Bucket{})
+		w.Header().Set("Content-Type", "text/html")
+		w.Write([]byte(`<option value="">No buckets found</option>`))
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(buckets)
+	w.Header().Set("Content-Type", "text/html")
+	var html string
+	for _, b := range buckets {
+		html += fmt.Sprintf(`<option value="%s">%s</option>`, b.Name, b.Name)
+	}
+	w.Write([]byte(html))
 }
 
 func (h *Handler) PostStartScan(w http.ResponseWriter, r *http.Request) {
@@ -150,6 +401,18 @@ func (h *Handler) PostStartScan(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "bucket required", http.StatusBadRequest)
 		return
 	}
+	projectID := r.FormValue("project")
+	if projectID == "" {
+		http.Error(w, "project required", http.StatusBadRequest)
+		return
+	}
+
+	client := h.s3ClientFor(projectID)
+	if client == nil {
+		http.Error(w, "no S3 client for project (re-login may be required)", http.StatusBadRequest)
+		return
+	}
+	h.ScanEngine.SetS3Client(client)
 
 	ctx := context.Background()
 
@@ -167,7 +430,13 @@ func (h *Handler) PostStartScan(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	http.Redirect(w, r, "/scan/"+scanID+"/progress", http.StatusSeeOther)
+	redirectURL := "/scan/" + scanID + "/progress"
+	if r.Header.Get("HX-Request") == "true" {
+		w.Header().Set("HX-Redirect", redirectURL)
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+	http.Redirect(w, r, redirectURL, http.StatusSeeOther)
 }
 
 func (h *Handler) GetScanProgress(w http.ResponseWriter, r *http.Request) {
@@ -175,8 +444,6 @@ func (h *Handler) GetScanProgress(w http.ResponseWriter, r *http.Request) {
 	progress := h.ScanEngine.GetProgress()
 
 	data := &web.PageData{
-		LoggedIn:     true,
-		Page:         "scan_progress",
 		ScanID:       scanID,
 		Bucket:       "Loading...",
 		ObjectsFound: 0,
@@ -192,7 +459,18 @@ func (h *Handler) GetScanProgress(w http.ResponseWriter, r *http.Request) {
 		data.ProgressPct = 50.0
 	}
 
-	_ = h.Renderer.Render(w, "layout.html", data)
+	// HTMX poll requests get just the fragment; browser nav gets the full layout
+	if r.Header.Get("HX-Request") == "true" {
+		_ = h.Renderer.Render(w, "scan_progress", data)
+	} else {
+		data.LoggedIn = true
+		data.Page = "scan_progress"
+		acct, _ := h.Store.GetAccount(r.Context())
+		if acct != nil {
+			data.AccountEmail = acct.Email
+		}
+		_ = h.Renderer.Render(w, "layout.html", data)
+	}
 }
 
 func (h *Handler) GetScanStatus(w http.ResponseWriter, r *http.Request) {

@@ -7,14 +7,17 @@
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
     <script src="https://unpkg.com/htmx.org@1.9.10"></script>
     <link rel="stylesheet" href="/static/style.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Source+Sans+3:wght@400;700&family=Titillium+Web:wght@600&display=swap" rel="stylesheet">
 </head>
 <body>
     <div class="app">
         {{if .LoggedIn}}
         <nav class="sidebar">
-            <div class="sidebar-header">
-                <h1>S3lytics</h1>
-                <span class="version">v0.1.0</span>
+            <div class="sidebar-logo">
+                <img src="https://cdn.prod.website-files.com/67a4c547ac46cdf433fcc313/67b3c0496628451a2866ce80_logo%20cubbit.webp" alt="Cubbit" style="height:28px;width:auto;">
+                <span style="font-size:1.125rem;color:var(--grey-50);">S3lytics</span>
             </div>
             <ul class="sidebar-nav">
                 <li><a href="/" class="{{if eq .Page "dashboard"}}active{{end}}">Dashboard</a></li>
@@ -43,5 +46,20 @@
         </main>
         {{end}}
     </div>
+
+    {{if and .LoggedIn (eq .Page "scan_progress")}}
+    <script>
+        setInterval(function() {
+            fetch('/scan/{{.ScanID}}/status')
+                .then(function(r) { return r.json(); })
+                .then(function(data) {
+                    if (data.status === 'completed') {
+                        window.location.href = '/scan/' + data.scan_id;
+                    }
+                })
+                .catch(function() {});
+        }, 3000);
+    </script>
+    {{end}}
 </body>
 </html>

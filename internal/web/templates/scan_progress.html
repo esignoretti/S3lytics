@@ -1,8 +1,6 @@
 {{define "scan_progress"}}
-<h2 style="margin-bottom: 1.5rem;">Scan in Progress</h2>
-
 <div class="card" id="progress-container" hx-get="/scan/{{.ScanID}}/progress" hx-trigger="every 2s" hx-swap="outerHTML">
-    <h2>Scanning {{.Bucket}}</h2>
+    <h2>Scan in Progress — {{.Bucket}}</h2>
 
     <div style="margin: 1.5rem 0;">
         <div class="progress-bar">
@@ -10,38 +8,25 @@
         </div>
     </div>
 
-    <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 1rem; text-align: center;">
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:1rem;text-align:center;">
         <div>
-            <div style="font-size: 1.5rem; font-weight: 700; color: var(--primary);">{{.ObjectsFound}}</div>
-            <div style="font-size: 0.875rem; color: var(--text-muted);">Objects Found</div>
+            <div class="stat-value" style="font-size:1.75rem;">{{.ObjectsFound}}</div>
+            <div class="stat-label">Objects Found</div>
         </div>
         <div>
-            <div style="font-size: 1.5rem; font-weight: 700;">{{.Elapsed}}</div>
-            <div style="font-size: 0.875rem; color: var(--text-muted);">Elapsed</div>
+            <div class="stat-value" style="font-size:1.75rem;color:#FFFFFF;">{{.Elapsed}}</div>
+            <div class="stat-label">Elapsed</div>
         </div>
         <div>
-            <div style="font-size: 1.5rem; font-weight: 700;">{{.ScanType}}</div>
-            <div style="font-size: 0.875rem; color: var(--text-muted);">Scan Type</div>
+            <div class="stat-value" style="font-size:1.75rem;color:#FFFFFF;">{{.ScanType}}</div>
+            <div class="stat-label">Scan Type</div>
         </div>
     </div>
 
-    <div style="margin-top: 1rem; text-align: center;">
-        <span style="color: var(--text-muted); font-size: 0.875rem;">
+    <div style="margin-top:1rem;text-align:center;">
+        <span style="color:var(--grey-300);font-size:0.875rem;">
             {{if .Status}}{{.Status}}{{else}}Running...{{end}}
         </span>
     </div>
 </div>
-
-<script>
-    setInterval(function() {
-        fetch('/scan/{{.ScanID}}/status')
-            .then(r => r.json())
-            .then(data => {
-                if (data.status === 'completed') {
-                    window.location.href = '/scan/' + data.scan_id;
-                }
-            })
-            .catch(() => {});
-    }, 3000);
-</script>
 {{end}}

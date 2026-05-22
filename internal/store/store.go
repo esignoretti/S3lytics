@@ -16,10 +16,16 @@ type Store interface {
 	GetAccount(ctx context.Context) (*AccountData, error)
 	ClearAuth(ctx context.Context) error
 
+	SaveS3Credential(ctx context.Context, cred *S3Credential) error
+	GetS3Credential(ctx context.Context, name string) (*S3Credential, error)
+	DeleteS3Credential(ctx context.Context, name string) error
+	ListS3Credentials(ctx context.Context) ([]*S3Credential, error)
+
 	SaveProjects(ctx context.Context, projects []Project) error
 	GetProjects(ctx context.Context) ([]Project, error)
 	SaveBuckets(ctx context.Context, projectID string, buckets []Bucket) error
 	GetBuckets(ctx context.Context, projectID string) ([]Bucket, error)
+	ClearAllBuckets(ctx context.Context) error
 
 	SaveObject(ctx context.Context, bucket string, obj *ObjectRecord) error
 	DeleteObject(ctx context.Context, bucket string, encodedKey string) error
@@ -55,6 +61,7 @@ var (
 	prefixScanSummary = []byte("scans/summary/")
 	prefixScanResult  = []byte("scans/result/")
 	prefixBucketIndex = []byte("bucket/index/")
+	prefixS3Cred      = []byte("auth/s3cred/")
 )
 
 func NewBadgerStore(dir string) (*BadgerStore, error) {
@@ -158,7 +165,64 @@ func (s *BadgerStore) ClearAuth(ctx context.Context) error {
 	if err := s.del(ctx, prefixAuthAccount); err != nil && err != badger.ErrKeyNotFound {
 		return err
 	}
+	return s.db.Update(func(txn *badger.Txn) error {
+		it := txn.NewIterator(badger.DefaultIteratorOptions)
+		defer it.Close()
+		var toDelete [][]byte
+		for it.Seek(prefixS3Cred); it.ValidForPrefix(prefixS3Cred); it.Next() {
+			toDelete = append(toDelete, it.Item().KeyCopy(nil))
+		}
+		for _, k := range toDelete {
+			if err := txn.Delete(k); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
+func (s *BadgerStore) SaveS3Credential(ctx context.Context, cred *S3Credential) error {
+	return s.set(ctx, append(prefixS3Cred, []byte(cred.Name)...), cred)
+}
+
+func (s *BadgerStore) GetS3Credential(ctx context.Context, name string) (*S3Credential, error) {
+	data, err := s.get(ctx, append(prefixS3Cred, []byte(name)...))
+	if err != nil {
+		return nil, err
+	}
+	var cred S3Credential
+	if err := json.Unmarshal(data, &cred); err != nil {
+		return nil, err
+	}
+	return &cred, nil
+}
+
+func (s *BadgerStore) DeleteS3Credential(ctx context.Context, name string) error {
+	err := s.del(ctx, append(prefixS3Cred, []byte(name)...))
+	if err != nil && err != badger.ErrKeyNotFound {
+		return err
+	}
 	return nil
+}
+
+func (s *BadgerStore) ListS3Credentials(ctx context.Context) ([]*S3Credential, error) {
+	var out []*S3Credential
+	err := s.db.View(func(txn *badger.Txn) error {
+		it := txn.NewIterator(badger.DefaultIteratorOptions)
+		defer it.Close()
+		for it.Seek(prefixS3Cred); it.ValidForPrefix(prefixS3Cred); it.Next() {
+			var cred S3Credential
+			err := it.Item().Value(func(v []byte) error {
+				return json.Unmarshal(v, &cred)
+			})
+			if err != nil {
+				return err
+			}
+			out = append(out, &cred)
+		}
+		return nil
+	})
+	return out, err
 }
 
 func (s *BadgerStore) SaveProjects(ctx context.Context, projects []Project) error {
@@ -180,6 +244,23 @@ func (s *BadgerStore) GetProjects(ctx context.Context) ([]Project, error) {
 func (s *BadgerStore) SaveBuckets(ctx context.Context, projectID string, buckets []Bucket) error {
 	key := append(prefixBuckets, []byte(projectID)...)
 	return s.set(ctx, key, buckets)
+}
+
+func (s *BadgerStore) ClearAllBuckets(ctx context.Context) error {
+	return s.db.Update(func(txn *badger.Txn) error {
+		it := txn.NewIterator(badger.DefaultIteratorOptions)
+		defer it.Close()
+		var toDelete [][]byte
+		for it.Seek(prefixBuckets); it.ValidForPrefix(prefixBuckets); it.Next() {
+			toDelete = append(toDelete, it.Item().KeyCopy(nil))
+		}
+		for _, k := range toDelete {
+			if err := txn.Delete(k); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
 }
 
 func (s *BadgerStore) GetBuckets(ctx context.Context, projectID string) ([]Bucket, error) {

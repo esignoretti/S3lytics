@@ -5,15 +5,26 @@ import "time"
 // --- Auth ---
 
 type SessionData struct {
-	JWT          string    `json:"jwt"`
-	RefreshToken string    `json:"refresh_token"`
-	ExpiresAt    time.Time `json:"expires_at"`
+	JWT            string    `json:"jwt"`
+	RefreshToken   string    `json:"refresh_token"`
+	CoordinatorURL string    `json:"coordinator_url,omitempty"`
+	ExpiresAt      time.Time `json:"expires_at"`
 }
 
 type AccountData struct {
 	EndpointGateway string `json:"endpoint_gateway"`
 	Email           string `json:"email"`
 	UserID          string `json:"user_id"`
+}
+
+// S3Credential persists a Cubbit-issued S3 key pair. The secret is only
+// returned by the keyvault API at creation time, so we must cache it.
+type S3Credential struct {
+	Name      string `json:"name"`
+	ApiKey    string `json:"api_key"`
+	SecretKey string `json:"secret_key"`
+	UserID    string `json:"user_id"`
+	ProjectID string `json:"project_id"`
 }
 
 // --- Projects & Buckets ---

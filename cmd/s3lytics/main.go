@@ -16,7 +16,6 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 
 	"github.com/esignoretti/s3lytics/internal/auth"
-	"github.com/esignoretti/s3lytics/internal/s3"
 	"github.com/esignoretti/s3lytics/internal/scan"
 	"github.com/esignoretti/s3lytics/internal/scan/deep"
 	"github.com/esignoretti/s3lytics/internal/store"
@@ -57,14 +56,13 @@ func main() {
 	}
 	defer badgerStore.Close()
 
-	// Initialize session manager
-	sessionManager := auth.NewSessionManager(badgerStore)
+	// Initialize auth service and session manager
+	authService := auth.NewService(badgerStore)
+	sessionManager := auth.NewSessionManager(badgerStore, authService)
 
-	// S3 client starts nil; created lazily after login
-	var s3Client s3.S3Client
-
-	// Initialize scan engine (nil client, will be set after login)
-	scanEngine := scan.NewEngine(s3Client, badgerStore)
+	// Scan engine starts with a nil client; the handler swaps in the right
+	// per-project S3 client before each scan.
+	scanEngine := scan.NewEngine(nil, badgerStore)
 
 	// Initialize template renderer
 	renderer, err := web.NewTemplateRenderer()
@@ -75,9 +73,9 @@ func main() {
 	// Initialize HTTP handler
 	h := &handlers.Handler{
 		Store:          badgerStore,
+		AuthService:    authService,
 		SessionManager: sessionManager,
 		ScanEngine:     scanEngine,
-		S3Client:       s3Client,
 		Renderer:       renderer,
 		DeepConfig: deep.Config{
 			EnableDuplicates:      true,
@@ -103,6 +101,10 @@ func main() {
 	r.Use(authMiddleware(sessionManager))
 
 	h.RegisterRoutes(r)
+
+	// Rebuild per-project S3 clients from cached credentials so the app is
+	// usable after restart without forcing a re-login.
+	h.RestoreS3Clients(context.Background())
 
 	// Server
 	srv := &http.Server{
