@@ -19,6 +19,10 @@ func (m *mockS3Client) ListBuckets(ctx context.Context) ([]s3.BucketInfo, error)
 	return []s3.BucketInfo{{Name: "test-bucket"}}, nil
 }
 
+func (m *mockS3Client) ListPrefixes(ctx context.Context, bucket, prefix string) ([]string, error) {
+	return nil, nil
+}
+
 func (m *mockS3Client) ListObjectsPage(ctx context.Context, bucket string, continuationToken *string) (*s3.ListResult, error) {
 	return &s3.ListResult{
 		Objects:     m.objects,
