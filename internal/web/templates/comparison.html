@@ -1,9 +1,9 @@
 {{define "comparison"}}
-<h2 style="margin-bottom: 1.5rem;">Scan Comparison</h2>
+<h2 class="section-title">Scan Comparison</h2>
 
 <div class="compare-grid">
     <div>
-        <h3 style="margin-bottom:0.75rem;">Scan A: {{.ScanA.Record.Timestamp}}</h3>
+        <h3 style="margin-bottom:var(--space-12);">Scan A: {{.ScanA.Record.Timestamp}}</h3>
         <div class="stat-card">
             <div class="stat-value">{{.ScanA.Summary.TotalObjects}}</div>
             <div class="stat-label">Objects</div>
@@ -14,7 +14,7 @@
         </div>
     </div>
     <div>
-        <h3 style="margin-bottom:0.75rem;">Scan B: {{.ScanB.Record.Timestamp}}</h3>
+        <h3 style="margin-bottom:var(--space-12);">Scan B: {{.ScanB.Record.Timestamp}}</h3>
         <div class="stat-card">
             <div class="stat-value">{{.ScanB.Summary.TotalObjects}}</div>
             <div class="stat-label">Objects</div>
@@ -26,10 +26,10 @@
     </div>
 </div>
 
-<div style="margin-top:1.5rem;">
+<div style="margin-top:var(--space-24);">
     <div class="card">
         <h2>Changes</h2>
-        <div style="display:grid; grid-template-columns:1fr 1fr; gap:1rem; text-align:center;">
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:var(--space-16); text-align:center;">
             <div>
                 <div style="font-size:1.5rem; font-weight:700; {{if ge .ObjectDelta 0}}color:var(--green){{else}}color:var(--red){{end}}">
                     {{if ge .ObjectDelta 0}}+{{end}}{{.ObjectDelta}}
@@ -55,7 +55,7 @@
 </div>
 {{end}}
 
-<div style="margin-top:1.5rem;">
+<div style="margin-top:var(--space-24);">
     <div class="card">
         <h2>File Type Comparison</h2>
         <div class="compare-grid">

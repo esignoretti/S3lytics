@@ -2,28 +2,28 @@
 <div class="card" id="progress-container" hx-get="/scan/{{.ScanID}}/progress" hx-trigger="every 2s" hx-swap="outerHTML">
     <h2>Scan in Progress — {{.Bucket}}</h2>
 
-    <div style="margin: 1.5rem 0;">
+    <div style="margin: var(--space-24) 0;">
         <div class="progress-bar">
             <div class="progress-bar-fill" style="width: {{.ProgressPct}}%;"></div>
         </div>
     </div>
 
-    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:1rem;text-align:center;">
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:var(--space-16);text-align:center;">
         <div>
-            <div class="stat-value" style="font-size:1.75rem;">{{.ObjectsFound}}</div>
-            <div class="stat-label">Objects Found</div>
+            <div style="font-size:1.75rem;font-weight:700;color:var(--primary);">{{.ObjectsFound}}</div>
+            <div style="font-size:0.875rem;color:var(--text-muted);margin-top:var(--space-4);">Objects Found</div>
         </div>
         <div>
-            <div class="stat-value" style="font-size:1.75rem;color:#FFFFFF;">{{.Elapsed}}</div>
-            <div class="stat-label">Elapsed</div>
+            <div style="font-size:1.75rem;font-weight:700;color:#FFFFFF;">{{.Elapsed}}</div>
+            <div style="font-size:0.875rem;color:var(--text-muted);margin-top:var(--space-4);">Elapsed</div>
         </div>
         <div>
-            <div class="stat-value" style="font-size:1.75rem;color:#FFFFFF;">{{.ScanType}}</div>
-            <div class="stat-label">Scan Type</div>
+            <div style="font-size:1.75rem;font-weight:700;color:#FFFFFF;">{{.ScanType}}</div>
+            <div style="font-size:0.875rem;color:var(--text-muted);margin-top:var(--space-4);">Scan Type</div>
         </div>
     </div>
 
-    <div style="margin-top:1rem;text-align:center;">
+    <div style="margin-top:var(--space-16);text-align:center;">
         <span style="color:var(--grey-300);font-size:0.875rem;">
             {{if .Status}}{{.Status}}{{else}}Running...{{end}}
         </span>

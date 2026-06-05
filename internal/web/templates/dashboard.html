@@ -1,5 +1,5 @@
 {{define "dashboard"}}
-<h2 style="margin-bottom: 1.5rem;">Dashboard</h2>
+<h2 class="section-title">Dashboard</h2>
 
 <div class="card">
     <h2>Select Bucket</h2>
@@ -36,12 +36,12 @@
             </div>
         </div>
 
-        <div class="form-group" style="display:flex; gap:0.75rem;">
+        <div class="form-group" style="display:flex; gap:var(--space-12);">
             <button type="submit" class="btn">Start Full Scan</button>
             <button type="submit" name="incremental" value="true" class="btn btn-secondary">Start Incremental Scan</button>
         </div>
 
-        <div style="margin-top:0.75rem; display:flex; gap:0.75rem;">
+        <div style="margin-top:var(--space-12); display:flex; gap:var(--space-12);">
             <a href="/history" class="btn btn-secondary">View History</a>
         </div>
     </form>

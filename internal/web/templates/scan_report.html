@@ -1,7 +1,7 @@
 {{define "scan_report"}}
-<h2 style="margin-bottom: 1.5rem;">Scan Report: {{.Result.Record.Bucket}}</h2>
+<h2 class="section-title">Scan Report: {{.Result.Record.Bucket}}</h2>
 
-<div style="margin-bottom: 1rem; display:flex; gap:0.75rem; align-items:center;">
+<div style="margin-bottom: var(--space-16); display:flex; gap:var(--space-12); align-items:center; flex-wrap:wrap;">
     <span class="badge {{if eq .Result.Record.Status "completed"}}badge-green{{else}}badge-yellow{{end}}">
         {{.Result.Record.Status}}
     </span>
@@ -45,11 +45,11 @@
 {{if .Result.Delta}}
 <div class="card">
     <h2>Delta Report</h2>
-    <div style="display:grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap:1rem; text-align:center;">
-        <div><span style="font-size:1.25rem; font-weight:700; color:var(--green);">+{{.Result.Delta.New}}</span><br><span style="font-size:0.75rem;color:var(--text-muted);">New</span></div>
-        <div><span style="font-size:1.25rem; font-weight:700; color:var(--yellow);">{{.Result.Delta.Modified}}</span><br><span style="font-size:0.75rem;color:var(--text-muted);">Modified</span></div>
-        <div><span style="font-size:1.25rem; font-weight:700; color:var(--red);">-{{.Result.Delta.Deleted}}</span><br><span style="font-size:0.75rem;color:var(--text-muted);">Deleted</span></div>
-        <div><span style="font-size:1.25rem; font-weight:700;">{{.Result.Delta.Unchanged}}</span><br><span style="font-size:0.75rem;color:var(--text-muted);">Unchanged</span></div>
+    <div style="display:grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap:var(--space-16); text-align:center;">
+        <div><span style="font-size:1.3125rem; font-weight:700; color:var(--green);">+{{.Result.Delta.New}}</span><br><span style="font-size:0.75rem;color:var(--text-muted);">New</span></div>
+        <div><span style="font-size:1.3125rem; font-weight:700; color:var(--yellow);">{{.Result.Delta.Modified}}</span><br><span style="font-size:0.75rem;color:var(--text-muted);">Modified</span></div>
+        <div><span style="font-size:1.3125rem; font-weight:700; color:var(--red);">-{{.Result.Delta.Deleted}}</span><br><span style="font-size:0.75rem;color:var(--text-muted);">Deleted</span></div>
+        <div><span style="font-size:1.3125rem; font-weight:700;">{{.Result.Delta.Unchanged}}</span><br><span style="font-size:0.75rem;color:var(--text-muted);">Unchanged</span></div>
     </div>
 </div>
 {{end}}
@@ -159,10 +159,10 @@
         <p style="color:var(--red);">&#10007; Public access block not configured</p>
         {{end}}
         {{range .Result.AccessAudit.Findings}}
-        <div style="margin-top:0.75rem; padding:0.75rem; background:var(--surface-2); border-radius:var(--radius);">
+        <div style="margin-top:var(--space-12); padding:var(--space-12); background:var(--surface-2); border-radius:var(--radius-8);">
             <span class="badge {{if eq .Severity "HIGH"}}badge-red{{else}}badge-yellow{{end}}">{{.Severity}}</span>
             <strong>{{.Message}}</strong>
-            <p style="font-size:0.875rem; color:var(--text-muted); margin-top:0.25rem;">{{.Detail}}</p>
+            <p style="font-size:0.875rem; color:var(--text-muted); margin-top:var(--space-4);">{{.Detail}}</p>
         </div>
         {{end}}
     </div>
@@ -178,8 +178,8 @@
     <div class="accordion-body">
         <p>Algorithms: {{join .Result.Encryption.Algorithms ", "}}</p>
         {{if .Result.Encryption.UnencryptedKeys}}
-        <p style="color:var(--red); margin-top:0.75rem;">{{len .Result.Encryption.UnencryptedKeys}} unencrypted object samples</p>
-        <ul style="font-size:0.875rem; margin-top:0.5rem;">
+        <p style="color:var(--red); margin-top:var(--space-12);">{{len .Result.Encryption.UnencryptedKeys}} unencrypted object samples</p>
+        <ul style="font-size:0.875rem; margin-top:var(--space-8);">
             {{range .Result.Encryption.UnencryptedKeys}}
             <li>{{.}}</li>
             {{end}}
@@ -196,7 +196,7 @@
         <span>&#9660;</span>
     </div>
     <div class="accordion-body">
-        <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:1rem;">
+        <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:var(--space-16);">
             <div><strong>{{.Result.Versioning.TotalVersions}}</strong><br><span style="font-size:0.875rem;color:var(--text-muted);">Total Versions</span></div>
             <div><strong>{{.Result.Versioning.NonCurrentCount}}</strong><br><span style="font-size:0.875rem;color:var(--text-muted);">Non-Current</span></div>
             <div><strong>{{formatBytes .Result.Versioning.WastedBytes}}</strong><br><span style="font-size:0.875rem;color:var(--text-muted);">Wasted Space</span></div>
@@ -233,7 +233,7 @@
     <div class="accordion-body">
         <p>Pattern: <code>{{.Result.Naming.Pattern}}</code></p>
         {{if .Result.Naming.Examples}}
-        <ul style="font-size:0.875rem; margin-top:0.5rem; color:var(--red);">
+        <ul style="font-size:0.875rem; margin-top:var(--space-8); color:var(--red);">
             {{range .Result.Naming.Examples}}<li>{{.}}</li>{{end}}
         </ul>
         {{end}}
@@ -275,7 +275,7 @@
         </div>
         {{end}}
         {{if .Result.Virus.Errors}}
-        <div style="color:var(--yellow); margin-top:0.75rem;">
+        <div style="color:var(--yellow); margin-top:var(--space-12);">
             <strong>Errors:</strong>
             <ul>{{range .Result.Virus.Errors}}<li>{{.}}</li>{{end}}</ul>
         </div>
@@ -301,16 +301,29 @@ new Chart(document.getElementById('typesChart'), {
     type: 'pie',
     data: {
         labels: typesLabels,
-        datasets: [{ data: typesData, backgroundColor: ['#4f8cff','#34d399','#f87171','#fbbf24','#a78bfa','#f472b6','#2dd4bf','#fb923c'] }]
+        datasets: [{ data: typesData, backgroundColor: ['#0065FF','#27B681','#f87171','#F3B356','#8739B1','#f472b6','#2dd4bf','#fb923c'] }]
+    },
+    options: {
+        plugins: {
+            legend: { labels: { color: '#DEE4EA' } }
+        }
     }
 });
 new Chart(document.getElementById('agesChart'), {
     type: 'bar',
     data: {
         labels: agesLabels,
-        datasets: [{ label: 'Objects', data: agesCounts, backgroundColor: '#4f8cff' }]
+        datasets: [{ label: 'Objects', data: agesCounts, backgroundColor: '#0065FF' }]
     },
-    options: { scales: { y: { beginAtZero: true } } }
+    options: {
+        scales: {
+            y: { beginAtZero: true, grid: { color: '#31393F' }, ticks: { color: '#9099A1' } },
+            x: { grid: { display: false }, ticks: { color: '#9099A1' } }
+        },
+        plugins: {
+            legend: { labels: { color: '#DEE4EA' } }
+        }
+    }
 });
 </script>
 {{end}}

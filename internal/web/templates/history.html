@@ -1,5 +1,5 @@
 {{define "history"}}
-<h2 style="margin-bottom: 1.5rem;">Scan History</h2>
+<h2 class="section-title">Scan History</h2>
 
 {{if .Buckets}}
 <div class="form-group" style="max-width: 300px;">
@@ -51,11 +51,11 @@
     </table>
 </form>
 
-<div style="margin-top:1rem;">
+<div style="margin-top:var(--space-16);">
     <button id="compare-btn" class="btn btn-secondary" disabled onclick="document.getElementById('compare-form').submit()">
         Compare Selected
     </button>
-    <span style="font-size:0.875rem; color:var(--text-muted); margin-left:0.75rem;">Select exactly 2 scans to compare</span>
+    <span style="font-size:0.875rem; color:var(--text-muted); margin-left:var(--space-12);">Select exactly 2 scans to compare</span>
 </div>
 
 <script>
@@ -68,7 +68,7 @@ function updateCompareBtn() {
 <div class="empty-state">
     <h3>No scans yet</h3>
     <p>Run a scan from the dashboard to see history here.</p>
-    <a href="/" class="btn" style="margin-top:1rem;">Go to Dashboard</a>
+    <a href="/" class="btn" style="margin-top:var(--space-16);">Go to Dashboard</a>
 </div>
 {{end}}
 {{end}}
