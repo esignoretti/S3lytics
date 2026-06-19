@@ -7,6 +7,7 @@ import (
 	"math/rand"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/esignoretti/s3lytics/internal/s3"
@@ -183,6 +184,7 @@ func (e *Engine) runCollector(ctx context.Context, scanID, bucket string, objCha
 	agg := newStatsAggregator()
 	batch := make([]*store.ObjectRecord, 0, e.config.BatchSize)
 	startTime := time.Now()
+	var objectsReceived atomic.Int64
 
 	var seenKeys map[string]bool
 	var currentKeys map[string]*store.ObjectRecord
@@ -212,6 +214,23 @@ func (e *Engine) runCollector(ctx context.Context, scanID, bucket string, objCha
 		return nil
 	}
 
+	// Push live progress every 500ms so the UI doesn't show 0 until the first batch flush
+	progressTick := time.NewTicker(500 * time.Millisecond)
+	defer progressTick.Stop()
+
+	done := make(chan struct{})
+	go func() {
+		for {
+			select {
+			case <-progressTick.C:
+				e.updateProgress(scanID, objectsReceived.Load(), time.Since(startTime))
+			case <-done:
+				return
+			}
+		}
+	}()
+	defer close(done)
+
 	for {
 		select {
 		case msg, ok := <-objChan:
@@ -230,6 +249,7 @@ func (e *Engine) runCollector(ctx context.Context, scanID, bucket string, objCha
 			}
 			msg.obj.ScanID = scanID
 			batch = append(batch, msg.obj)
+			objectsReceived.Add(1)
 			if seenKeys != nil {
 				seenKeys[msg.obj.Key] = true
 				currentKeys[msg.obj.Key] = msg.obj
