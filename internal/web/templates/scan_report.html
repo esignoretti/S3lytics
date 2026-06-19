@@ -1,5 +1,6 @@
 {{define "scan_report"}}
-<h2 class="section-title">Scan Report: {{.Result.Record.Bucket}}</h2>
+<div class="fade-in">
+<h2 class="section-title">{{.Result.Record.Bucket}}</h2>
 
 <div style="margin-bottom: var(--space-16); display:flex; gap:var(--space-12); align-items:center; flex-wrap:wrap;">
     <span class="badge {{if eq .Result.Record.Status "completed"}}badge-green{{else}}badge-yellow{{end}}">
@@ -283,6 +284,8 @@
     </div>
 </div>
 {{end}}
+
+</div>
 
 <script>
 var typesLabels = [];

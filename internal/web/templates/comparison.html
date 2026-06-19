@@ -1,73 +1,74 @@
 {{define "comparison"}}
-<h2 class="section-title">Scan Comparison</h2>
+<div class="fade-in">
+    <h2 class="section-title">Scan Comparison</h2>
 
-<div class="compare-grid">
-    <div>
-        <h3 style="margin-bottom:var(--space-12);">Scan A: {{.ScanA.Record.Timestamp}}</h3>
-        <div class="stat-card">
-            <div class="stat-value">{{.ScanA.Summary.TotalObjects}}</div>
-            <div class="stat-label">Objects</div>
+    <div class="compare-grid">
+        <div class="card" style="margin-bottom:0;">
+            <h2>Scan A</h2>
+            <p style="font-size:0.875rem;color:var(--text-muted);margin-bottom:var(--space-16);">{{.ScanA.Record.Timestamp}}</p>
+            <div class="stat-card">
+                <div class="stat-value">{{.ScanA.Summary.TotalObjects}}</div>
+                <div class="stat-label">Objects</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value">{{formatBytes .ScanA.Summary.TotalSize}}</div>
+                <div class="stat-label">Size</div>
+            </div>
         </div>
-        <div class="stat-card">
-            <div class="stat-value">{{formatBytes .ScanA.Summary.TotalSize}}</div>
-            <div class="stat-label">Size</div>
+        <div class="card" style="margin-bottom:0;">
+            <h2>Scan B</h2>
+            <p style="font-size:0.875rem;color:var(--text-muted);margin-bottom:var(--space-16);">{{.ScanB.Record.Timestamp}}</p>
+            <div class="stat-card">
+                <div class="stat-value">{{.ScanB.Summary.TotalObjects}}</div>
+                <div class="stat-label">Objects</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value">{{formatBytes .ScanB.Summary.TotalSize}}</div>
+                <div class="stat-label">Size</div>
+            </div>
         </div>
     </div>
-    <div>
-        <h3 style="margin-bottom:var(--space-12);">Scan B: {{.ScanB.Record.Timestamp}}</h3>
-        <div class="stat-card">
-            <div class="stat-value">{{.ScanB.Summary.TotalObjects}}</div>
-            <div class="stat-label">Objects</div>
-        </div>
-        <div class="stat-card">
-            <div class="stat-value">{{formatBytes .ScanB.Summary.TotalSize}}</div>
-            <div class="stat-label">Size</div>
-        </div>
-    </div>
-</div>
 
-<div style="margin-top:var(--space-24);">
     <div class="card">
         <h2>Changes</h2>
         <div style="display:grid; grid-template-columns:1fr 1fr; gap:var(--space-16); text-align:center;">
             <div>
-                <div style="font-size:1.5rem; font-weight:700; {{if ge .ObjectDelta 0}}color:var(--green){{else}}color:var(--red){{end}}">
+                <div style="font-size:2.25rem; font-weight:700; {{if ge .ObjectDelta 0}}color:var(--green){{else}}color:var(--red){{end}}">
                     {{if ge .ObjectDelta 0}}+{{end}}{{.ObjectDelta}}
                 </div>
                 <div style="font-size:0.875rem; color:var(--text-muted);">Object Count Change</div>
             </div>
             <div>
-                <div style="font-size:1.5rem; font-weight:700; {{if ge .SizeDelta 0}}color:var(--green){{else}}color:var(--red){{end}}">
+                <div style="font-size:2.25rem; font-weight:700; {{if ge .SizeDelta 0}}color:var(--green){{else}}color:var(--red){{end}}">
                     {{formatBytes .SizeDelta}}
                 </div>
                 <div style="font-size:0.875rem; color:var(--text-muted);">Size Change</div>
             </div>
         </div>
     </div>
-</div>
 
-{{if .TrendData}}
-<div class="card">
-    <h2>Trends (3+ scans required for time series)</h2>
-    <div class="chart-container">
-        <canvas id="trendChart"></canvas>
+    {{if .TrendData}}
+    <div class="card">
+        <h2>Trends</h2>
+        <p style="font-size:0.875rem;color:var(--text-muted);margin-bottom:var(--space-16);">3+ scans required for time series</p>
+        <div class="chart-container">
+            <canvas id="trendChart"></canvas>
+        </div>
     </div>
-</div>
-{{end}}
+    {{end}}
 
-<div style="margin-top:var(--space-24);">
     <div class="card">
         <h2>File Type Comparison</h2>
-        <div class="compare-grid">
+        <div class="compare-grid" style="margin-top:var(--space-16);">
             <div>
-                <h4>Scan A</h4>
+                <h4 style="margin-bottom:var(--space-8);font-size:1rem;">Scan A</h4>
                 <table>
                     <thead><tr><th>Ext</th><th>Count</th></tr></thead>
                     <tbody>{{range .ScanA.Types}}<tr><td>{{.Ext}}</td><td>{{.Count}}</td></tr>{{end}}</tbody>
                 </table>
             </div>
             <div>
-                <h4>Scan B</h4>
+                <h4 style="margin-bottom:var(--space-8);font-size:1rem;">Scan B</h4>
                 <table>
                     <thead><tr><th>Ext</th><th>Count</th></tr></thead>
                     <tbody>{{range .ScanB.Types}}<tr><td>{{.Ext}}</td><td>{{.Count}}</td></tr>{{end}}</tbody>

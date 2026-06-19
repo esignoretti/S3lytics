@@ -1,9 +1,9 @@
 {{define "login"}}
 <div class="card login-box" style="text-align:center;">
     <div class="login-logo">
-    <img src="https://cdn.prod.website-files.com/67a4c547ac46cdf433fcc313/67b3c0496628451a2866ce80_logo%20cubbit.webp" alt="Cubbit" style="height:32px;width:auto;">
-</div>
-    <h1 class="card-title" style="color:#FFFFFF;">Sign in</h1>
+        <img src="https://cdn.prod.website-files.com/67a4c547ac46cdf433fcc313/67b3c0496628451a2866ce80_logo%20cubbit.webp" alt="Cubbit" style="height:32px;width:auto;">
+    </div>
+    <h1 class="card-title">Sign in</h1>
     <p style="color:var(--grey-300);margin-bottom:var(--space-32);font-size:0.875rem;">Enter your Cubbit IAM credentials</p>
 
     {{if .Error}}
@@ -13,28 +13,35 @@
     <form action="/login" method="POST">
         <div class="form-group">
             <label for="email">Email</label>
-            <input type="email" id="email" name="email" required placeholder="user@example.com">
+            <input type="email" id="email" name="email" required placeholder="user@example.com" autocomplete="email">
         </div>
 
         <div class="form-group">
             <label for="password">Password</label>
-            <input type="password" id="password" name="password" required>
+            <input type="password" id="password" name="password" required autocomplete="current-password">
         </div>
 
-        <div class="form-group">
-            <label for="tfa_code">2FA Code <span class="form-help">(optional)</span></label>
-            <input type="text" id="tfa_code" name="tfa_code" placeholder="000000">
-        </div>
+        <details style="margin-bottom:var(--space-16);text-align:left;">
+            <summary style="cursor:pointer;font-size:0.8125rem;color:var(--text-muted);padding:0.25rem 0;">
+                Advanced options
+            </summary>
+            <div style="margin-top:var(--space-12);">
+                <div class="form-group">
+                    <label for="tfa_code">2FA Code <span class="form-help">(optional)</span></label>
+                    <input type="text" id="tfa_code" name="tfa_code" placeholder="000000" autocomplete="one-time-code">
+                </div>
 
-        <div class="form-group">
-            <label for="tenant_id">Tenant ID <span class="form-help">(optional)</span></label>
-            <input type="text" id="tenant_id" name="tenant_id" placeholder="tenant-id">
-        </div>
+                <div class="form-group">
+                    <label for="tenant_id">Tenant ID <span class="form-help">(optional)</span></label>
+                    <input type="text" id="tenant_id" name="tenant_id" placeholder="tenant-id">
+                </div>
 
-        <div class="form-group">
-            <label for="api_url">API Server URL <span class="form-help">(optional, defaults to Cubbit IAM)</span></label>
-            <input type="url" id="api_url" name="api_url" placeholder="https://api.eu00wi.cubbit.services">
-        </div>
+                <div class="form-group">
+                    <label for="api_url">API Server URL <span class="form-help">(optional)</span></label>
+                    <input type="url" id="api_url" name="api_url" placeholder="https://api.eu00wi.cubbit.services">
+                </div>
+            </div>
+        </details>
 
         <button type="submit" class="btn" style="width:100%;">Sign In</button>
     </form>

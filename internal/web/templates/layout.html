@@ -14,19 +14,34 @@
 <body>
     <div class="app">
         {{if .LoggedIn}}
-        <nav class="sidebar">
+        <nav class="sidebar" role="navigation" aria-label="Main navigation">
             <div class="sidebar-logo">
                 <img src="https://cdn.prod.website-files.com/67a4c547ac46cdf433fcc313/67b3c0496628451a2866ce80_logo%20cubbit.webp" alt="Cubbit" style="height:28px;width:auto;">
                 <span>S3lytics</span>
             </div>
             <ul class="sidebar-nav">
-                <li><a href="/" class="{{if eq .Page "dashboard"}}active{{end}}">Dashboard</a></li>
-                <li><a href="/history" class="{{if eq .Page "history"}}active{{end}}">Scan History</a></li>
-                <li><a href="/settings" class="{{if eq .Page "settings"}}active{{end}}">Settings</a></li>
+                <li>
+                    <a href="/" class="{{if eq .Page "dashboard"}}active{{end}}">
+                        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="9"/><rect x="14" y="3" width="7" height="5"/><rect x="14" y="12" width="7" height="9"/><rect x="3" y="16" width="7" height="5"/></svg>
+                        Dashboard
+                    </a>
+                </li>
+                <li>
+                    <a href="/history" class="{{if eq .Page "history"}}active{{end}}">
+                        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                        Scan History
+                    </a>
+                </li>
+                <li>
+                    <a href="/settings" class="{{if eq .Page "settings"}}active{{end}}">
+                        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+                        Settings
+                    </a>
+                </li>
             </ul>
             <div class="sidebar-footer">
-                <span class="account-email">{{.AccountEmail}}</span>
-                <form action="/logout" method="POST" style="display:inline;">
+                <span class="account-email" title="{{.AccountEmail}}">{{.AccountEmail}}</span>
+                <form action="/logout" method="POST">
                     <button type="submit" class="btn-link">Logout</button>
                 </form>
             </div>
@@ -47,18 +62,45 @@
         {{end}}
     </div>
 
+    <div class="toast-container" id="toast-container"></div>
+
+    {{if .LoggedIn}}
+    <script>
+        document.body.addEventListener('htmx:beforeSwap', function(evt) {
+            if (evt.detail.xhr.status >= 400) {
+                showToast(evt.detail.xhr.responseText || 'Request failed', 'error');
+            }
+        });
+        document.body.addEventListener('htmx:responseError', function(evt) {
+            showToast('Request failed', 'error');
+        });
+        function showToast(msg, type) {
+            var c = document.getElementById('toast-container');
+            var t = document.createElement('div');
+            t.className = 'toast toast-' + (type || 'success');
+            t.textContent = msg;
+            c.appendChild(t);
+            setTimeout(function() { t.remove(); }, 4000);
+        }
+    </script>
+    {{end}}
+
     {{if and .LoggedIn (eq .Page "scan_progress")}}
     <script>
-        setInterval(function() {
-            fetch('/scan/{{.ScanID}}/status')
-                .then(function(r) { return r.json(); })
-                .then(function(data) {
-                    if (data.status === 'completed') {
-                        window.location.href = '/scan/' + data.scan_id;
-                    }
-                })
-                .catch(function() {});
-        }, 3000);
+        (function() {
+            var checkUrl = '/scan/{{.ScanID}}/status';
+            function poll() {
+                fetch(checkUrl)
+                    .then(function(r) { return r.json(); })
+                    .then(function(data) {
+                        if (data.status === 'completed') {
+                            window.location.href = '/scan/' + data.scan_id;
+                        }
+                    })
+                    .catch(function() {});
+            }
+            setInterval(poll, 3000);
+        })();
     </script>
     {{end}}
 </body>

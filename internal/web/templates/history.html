@@ -1,74 +1,79 @@
 {{define "history"}}
-<h2 class="section-title">Scan History</h2>
+<div class="fade-in">
+    <h2 class="section-title">Scan History</h2>
 
-{{if .Buckets}}
-<div class="form-group" style="max-width: 300px;">
-    <label for="bucket-filter">Filter by Bucket</label>
-    <select id="bucket-filter" onchange="window.location.href='?bucket='+this.value">
-        <option value="">All buckets</option>
-        {{range .Buckets}}
-        <option value="{{.}}" {{if eq $.SelectedBucket .}}selected{{end}}>{{.}}</option>
-        {{end}}
-    </select>
+    {{if .Buckets}}
+    <div class="form-group" style="max-width: 300px;">
+        <label for="bucket-filter">Filter by Bucket</label>
+        <select id="bucket-filter" onchange="window.location.href='?bucket='+this.value">
+            <option value="">All buckets</option>
+            {{range .Buckets}}
+            <option value="{{.}}" {{if eq $.SelectedBucket .}}selected{{end}}>{{.}}</option>
+            {{end}}
+        </select>
+    </div>
+    {{end}}
+
+    {{if .Scans}}
+    <div class="card" style="padding:0;">
+        <form action="/compare" method="GET" id="compare-form">
+            <table>
+                <thead>
+                    <tr>
+                        <th style="width:40px;">Compare</th>
+                        <th>Date</th>
+                        <th>Bucket</th>
+                        <th>Type</th>
+                        <th>Status</th>
+                        <th>Duration</th>
+                        <th>Objects</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                {{range .Scans}}
+                    <tr>
+                        <td><input type="checkbox" name="scans" value="{{.ID}}" onchange="updateCompareBtn()"></td>
+                        <td>{{.Timestamp}}</td>
+                        <td>{{.Bucket}}</td>
+                        <td><span class="badge {{if eq .ScanType "full"}}badge-yellow{{else}}badge-green{{end}}">{{.ScanType}}</span></td>
+                        <td><span class="badge {{if eq .Status "completed"}}badge-green{{else}}badge-red{{end}}">{{.Status}}</span></td>
+                        <td>{{.Duration}}</td>
+                        <td>{{.TotalObjects}}</td>
+                        <td style="display:flex;gap:var(--space-12);">
+                            <a href="/scan/{{.ID}}" class="btn-link">View</a>
+                            <form action="/scan/{{.ID}}/delete" method="POST" style="display:inline;"
+                                  onsubmit="return confirm('Delete this scan?')">
+                                <button type="submit" class="btn-link" style="color:var(--red);">Delete</button>
+                            </form>
+                        </td>
+                    </tr>
+                {{end}}
+                </tbody>
+            </table>
+        </form>
+    </div>
+
+    <div style="margin-top:var(--space-16);display:flex;align-items:center;gap:var(--space-12);">
+        <button id="compare-btn" class="btn btn-secondary" disabled onclick="document.getElementById('compare-form').submit()">
+            Compare Selected
+        </button>
+        <span style="font-size:0.875rem; color:var(--text-muted);">Select exactly 2 scans to compare</span>
+    </div>
+
+    <script>
+    function updateCompareBtn() {
+        var checked = document.querySelectorAll('input[name="scans"]:checked');
+        document.getElementById('compare-btn').disabled = checked.length !== 2;
+    }
+    </script>
+    {{else}}
+    <div class="empty-state">
+        <svg class="empty-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+        <h3>No scans yet</h3>
+        <p>Run a scan from the dashboard to see history here.</p>
+        <a href="/" class="btn" style="margin-top:var(--space-16);">Go to Dashboard</a>
+    </div>
+    {{end}}
 </div>
-{{end}}
-
-{{if .Scans}}
-<form action="/compare" method="GET" id="compare-form">
-    <table>
-        <thead>
-            <tr>
-                <th style="width:40px;">Compare</th>
-                <th>Date</th>
-                <th>Bucket</th>
-                <th>Type</th>
-                <th>Status</th>
-                <th>Duration</th>
-                <th>Objects</th>
-                <th>Actions</th>
-            </tr>
-        </thead>
-        <tbody>
-        {{range .Scans}}
-            <tr>
-                <td><input type="checkbox" name="scans" value="{{.ID}}" onchange="updateCompareBtn()"></td>
-                <td>{{.Timestamp}}</td>
-                <td>{{.Bucket}}</td>
-                <td><span class="badge {{if eq .ScanType "full"}}badge-yellow{{else}}badge-green{{end}}">{{.ScanType}}</span></td>
-                <td><span class="badge {{if eq .Status "completed"}}badge-green{{else}}badge-red{{end}}">{{.Status}}</span></td>
-                <td>{{.Duration}}</td>
-                <td>{{.TotalObjects}}</td>
-                <td>
-                    <a href="/scan/{{.ID}}" class="btn-link">View</a>
-                    <form action="/scan/{{.ID}}/delete" method="POST" style="display:inline;"
-                          onsubmit="return confirm('Delete this scan?')">
-                        <button type="submit" class="btn-link" style="color:var(--red);">Delete</button>
-                    </form>
-                </td>
-            </tr>
-        {{end}}
-        </tbody>
-    </table>
-</form>
-
-<div style="margin-top:var(--space-16);">
-    <button id="compare-btn" class="btn btn-secondary" disabled onclick="document.getElementById('compare-form').submit()">
-        Compare Selected
-    </button>
-    <span style="font-size:0.875rem; color:var(--text-muted); margin-left:var(--space-12);">Select exactly 2 scans to compare</span>
-</div>
-
-<script>
-function updateCompareBtn() {
-    var checked = document.querySelectorAll('input[name="scans"]:checked');
-    document.getElementById('compare-btn').disabled = checked.length !== 2;
-}
-</script>
-{{else}}
-<div class="empty-state">
-    <h3>No scans yet</h3>
-    <p>Run a scan from the dashboard to see history here.</p>
-    <a href="/" class="btn" style="margin-top:var(--space-16);">Go to Dashboard</a>
-</div>
-{{end}}
 {{end}}
