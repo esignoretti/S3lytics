@@ -131,18 +131,36 @@ func (e *Engine) runDispatcher(ctx context.Context, bucket string, prefixChan ch
 }
 
 func (e *Engine) runWorker(ctx context.Context, bucket, prefix string, objChan chan<- collectorMsg) {
-	var continuationToken *string
 	isTruncated := true
+
+	// Kick off the first page fetch (with prefix to divide work)
+	nextCh := make(chan pageResult, 1)
+	go func() {
+		page, err := e.client.ListObjectsPage(ctx, bucket, prefix, nil)
+		nextCh <- pageResult{page, err}
+	}()
 
 	for isTruncated {
 		if ctx.Err() != nil {
 			return
 		}
 
-		page, err := e.client.ListObjectsPage(ctx, bucket, continuationToken)
-		if err != nil {
-			objChan <- collectorMsg{err: err}
+		// Wait for the current page to arrive
+		result := <-nextCh
+		if result.err != nil {
+			objChan <- collectorMsg{err: result.err}
 			return
+		}
+		page := result.page
+
+		// If there's a next page, kick off its fetch while we drain this one
+		if page.IsTruncated {
+			nextCh = make(chan pageResult, 1)
+			token := page.ContinuationToken
+			go func() {
+				p, err := e.client.ListObjectsPage(ctx, bucket, prefix, token)
+				nextCh <- pageResult{p, err}
+			}()
 		}
 
 		for _, obj := range page.Objects {
@@ -158,7 +176,6 @@ func (e *Engine) runWorker(ctx context.Context, bucket, prefix string, objChan c
 		}
 
 		isTruncated = page.IsTruncated
-		continuationToken = page.ContinuationToken
 	}
 }
 

@@ -20,7 +20,7 @@ func (m *mockS3Client) ListPrefixes(ctx context.Context, bucket, prefix string) 
 	return nil, nil
 }
 
-func (m *mockS3Client) ListObjectsPage(ctx context.Context, bucket string, continuationToken *string) (*s3.ListResult, error) {
+func (m *mockS3Client) ListObjectsPage(ctx context.Context, bucket, prefix string, continuationToken *string) (*s3.ListResult, error) {
 	return &s3.ListResult{
 		Objects:     m.objects,
 		IsTruncated: false,

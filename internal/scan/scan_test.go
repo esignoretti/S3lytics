@@ -16,7 +16,7 @@ import (
 type mockS3Client struct {
 	objects            []s3.ObjectInfo
 	listPrefixesResult []string
-	listObjectsPageFn  func(ctx context.Context, bucket string, token *string) (*s3.ListResult, error)
+	listObjectsPageFn  func(ctx context.Context, bucket string, token *string) (*s3.ListResult, error) // prefix ignored in mock
 }
 
 func (m *mockS3Client) ListBuckets(ctx context.Context) ([]s3.BucketInfo, error) {
@@ -30,7 +30,7 @@ func (m *mockS3Client) ListPrefixes(ctx context.Context, bucket, prefix string) 
 	return nil, nil
 }
 
-func (m *mockS3Client) ListObjectsPage(ctx context.Context, bucket string, continuationToken *string) (*s3.ListResult, error) {
+func (m *mockS3Client) ListObjectsPage(ctx context.Context, bucket, prefix string, continuationToken *string) (*s3.ListResult, error) {
 	if m.listObjectsPageFn != nil {
 		return m.listObjectsPageFn(ctx, bucket, continuationToken)
 	}

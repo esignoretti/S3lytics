@@ -24,9 +24,11 @@ func (c *CubbitS3Client) ListBuckets(ctx context.Context) ([]BucketInfo, error) 
 	return buckets, nil
 }
 
-func (c *CubbitS3Client) ListObjectsPage(ctx context.Context, bucket string, continuationToken *string) (*ListResult, error) {
+func (c *CubbitS3Client) ListObjectsPage(ctx context.Context, bucket, prefix string, continuationToken *string) (*ListResult, error) {
 	input := &s3.ListObjectsV2Input{
-		Bucket: &bucket,
+		Bucket:  &bucket,
+		Prefix:  &prefix,
+		MaxKeys: aws.Int32(2000),
 	}
 	if continuationToken != nil {
 		input.ContinuationToken = continuationToken

@@ -41,7 +41,7 @@ func ScanObjectsForVirus(ctx context.Context, client s3.S3Client, bucket string,
 	scannedCount := 0
 
 	for {
-		page, err := client.ListObjectsPage(ctx, bucket, continuationToken)
+		page, err := client.ListObjectsPage(ctx, bucket, "", continuationToken)
 		if err != nil {
 			break
 		}

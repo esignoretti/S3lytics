@@ -30,7 +30,7 @@ func AuditEncryption(ctx context.Context, client s3.S3Client, bucket string) (*s
 	totalChecked := 0
 
 	for {
-		result, err := client.ListObjectsPage(ctx, bucket, continuationToken)
+		result, err := client.ListObjectsPage(ctx, bucket, "", continuationToken)
 		if err != nil {
 			break
 		}

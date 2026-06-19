@@ -2,6 +2,8 @@ package s3
 
 import (
 	"context"
+	"net"
+	"net/http"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -32,7 +34,7 @@ type BucketInfo struct {
 
 type S3Client interface {
 	ListBuckets(ctx context.Context) ([]BucketInfo, error)
-	ListObjectsPage(ctx context.Context, bucket string, continuationToken *string) (*ListResult, error)
+	ListObjectsPage(ctx context.Context, bucket, prefix string, continuationToken *string) (*ListResult, error)
 	HeadObject(ctx context.Context, bucket, key string) (*ObjectInfo, error)
 	ListMultipartUploads(ctx context.Context, bucket string) ([]types.MultipartUpload, error)
 	GetBucketPolicy(ctx context.Context, bucket string) (string, error)
@@ -68,8 +70,25 @@ func NewCubbitS3Client(endpoint, region, accessKey, secretKey string) (*CubbitS3
 		return nil, err
 	}
 
+	// Tune HTTP transport for high-concurrency S3 access
+	httpClient := &http.Client{
+		Timeout: 30 * time.Second,
+		Transport: &http.Transport{
+			MaxIdleConns:        100,
+			MaxIdleConnsPerHost: 100,
+			MaxConnsPerHost:     100,
+			IdleConnTimeout:     90 * time.Second,
+			DialContext: (&net.Dialer{
+				Timeout:   10 * time.Second,
+				KeepAlive: 30 * time.Second,
+			}).DialContext,
+			ForceAttemptHTTP2: true,
+		},
+	}
+
 	client := s3.NewFromConfig(cfg, func(o *s3.Options) {
 		o.UsePathStyle = true
+		o.HTTPClient = httpClient
 	})
 
 	return &CubbitS3Client{client: client}, nil
