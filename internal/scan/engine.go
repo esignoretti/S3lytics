@@ -328,24 +328,25 @@ func (e *Engine) StartFullScan(ctx context.Context, bucket string) (string, erro
 	}
 	e.setProgress(progress)
 
-	go e.runFullScan(ctx, scanID, bucket)
+	go e.runFullScan(scanID, bucket)
 
 	return scanID, nil
 }
 
-func (e *Engine) runFullScan(ctx context.Context, scanID, bucket string) {
+func (e *Engine) runFullScan(scanID, bucket string) {
 	defer func() {
 		e.mu.Lock()
 		delete(e.running, bucket)
 		e.mu.Unlock()
 	}()
 
-	ctx, cancel := context.WithCancel(ctx)
+	// 24h timeout prevents infinite hang; user can refresh to re-queue
+	ctx, cancel := context.WithTimeout(context.Background(), 24*time.Hour)
 	defer cancel()
 
 	cfg := e.getConfig()
 	prefixChan := make(chan string, cfg.Workers)
-	objChan := make(chan collectorMsg, 1000)
+	objChan := make(chan collectorMsg, 10000)
 	startTime := time.Now()
 
 	type collResult struct {
@@ -514,17 +515,20 @@ func (e *Engine) StartIncrementalScan(ctx context.Context, bucket string) (strin
 	}
 	e.setProgress(progress)
 
-	go e.runIncrementalScan(ctx, scanID, bucket)
+	go e.runIncrementalScan(scanID, bucket)
 
 	return scanID, nil
 }
 
-func (e *Engine) runIncrementalScan(ctx context.Context, scanID, bucket string) {
+func (e *Engine) runIncrementalScan(scanID, bucket string) {
 	defer func() {
 		e.mu.Lock()
 		delete(e.running, bucket)
 		e.mu.Unlock()
 	}()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 24*time.Hour)
+	defer cancel()
 
 	previousKeys, err := e.store.ListObjectKeys(ctx, bucket)
 	if err != nil {
@@ -545,12 +549,9 @@ func (e *Engine) runIncrementalScan(ctx context.Context, scanID, bucket string) 
 		}
 	}
 
-	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
-
 	cfg := e.getConfig()
 	prefixChan := make(chan string, cfg.Workers)
-	objChan := make(chan collectorMsg, 1000)
+	objChan := make(chan collectorMsg, 10000)
 	startTime := time.Now()
 
 	type collResult struct {
