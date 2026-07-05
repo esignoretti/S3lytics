@@ -1,7 +1,6 @@
 package web
 
 import (
-	"bytes"
 	"fmt"
 	"html/template"
 	"io"
@@ -106,14 +105,6 @@ func NewTemplateRenderer() (*TemplateRenderer, error) {
 
 func (r *TemplateRenderer) Render(w io.Writer, name string, data *PageData) error {
 	return r.templates.ExecuteTemplate(w, name, data)
-}
-
-func (r *TemplateRenderer) RenderString(name string, data *PageData) (string, error) {
-	var buf bytes.Buffer
-	if err := r.Render(&buf, name, data); err != nil {
-		return "", err
-	}
-	return buf.String(), nil
 }
 
 func formatBytes(v interface{}) string {

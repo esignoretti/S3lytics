@@ -14,11 +14,12 @@ import (
 )
 
 type ObjectInfo struct {
-	Key          string
-	ETag         string
-	Size         int64
-	LastModified time.Time
-	StorageClass string
+	Key                  string
+	ETag                 string
+	Size                 int64
+	LastModified         time.Time
+	StorageClass         string
+	ServerSideEncryption string
 }
 
 type ListResult struct {

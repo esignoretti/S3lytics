@@ -2,6 +2,7 @@ package deep
 
 import (
 	"context"
+	"fmt"
 	"strings"
 
 	"github.com/esignoretti/s3lytics/internal/s3"
@@ -16,11 +17,11 @@ func AuditAccess(ctx context.Context, client s3.S3Client, bucket string) (*store
 	pab, err := client.GetPublicAccessBlock(ctx, bucket)
 	if err == nil && pab != nil {
 		audit.PublicAccessBlocked = true
-	} else {
+	} else if err != nil {
 		audit.Findings = append(audit.Findings, store.AccessFinding{
 			Severity: "WARN",
 			Message:  "Public access block not configured",
-			Detail:   "GetPublicAccessBlock returned an error; block may be absent",
+			Detail:   fmt.Sprintf("GetPublicAccessBlock failed: %v", err),
 		})
 	}
 

@@ -107,7 +107,7 @@ type DeltaReport struct {
 
 type DuplicateGroup struct {
 	ETag      string   `json:"etag"`
-	Count     int      `json:"count"`
+	Count     int64    `json:"count"`
 	TotalSize int64    `json:"total_size"`
 	Keys      []string `json:"keys"`
 }

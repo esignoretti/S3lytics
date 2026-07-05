@@ -2,6 +2,7 @@ package deep
 
 import (
 	"context"
+	"log"
 	"sync"
 
 	"github.com/esignoretti/s3lytics/internal/s3"
@@ -40,6 +41,8 @@ func RunAll(ctx context.Context, client s3.S3Client, bucket string, cfg Config) 
 				mu.Lock()
 				result.Duplicates = dups
 				mu.Unlock()
+			} else {
+				log.Printf("deep/coordinator: FindDuplicates failed: %v", err)
 			}
 		}()
 	}
@@ -53,6 +56,8 @@ func RunAll(ctx context.Context, client s3.S3Client, bucket string, cfg Config) 
 				mu.Lock()
 				result.Multiparts = uploads
 				mu.Unlock()
+			} else {
+				log.Printf("deep/coordinator: FindMultipartUploads failed: %v", err)
 			}
 		}()
 	}
@@ -66,6 +71,8 @@ func RunAll(ctx context.Context, client s3.S3Client, bucket string, cfg Config) 
 				mu.Lock()
 				result.AccessAudit = audit
 				mu.Unlock()
+			} else {
+				log.Printf("deep/coordinator: AuditAccess failed: %v", err)
 			}
 		}()
 	}
@@ -79,6 +86,8 @@ func RunAll(ctx context.Context, client s3.S3Client, bucket string, cfg Config) 
 				mu.Lock()
 				result.Encryption = enc
 				mu.Unlock()
+			} else {
+				log.Printf("deep/coordinator: AuditEncryption failed: %v", err)
 			}
 		}()
 	}
@@ -92,6 +101,8 @@ func RunAll(ctx context.Context, client s3.S3Client, bucket string, cfg Config) 
 				mu.Lock()
 				result.Versioning = ver
 				mu.Unlock()
+			} else {
+				log.Printf("deep/coordinator: AnalyzeVersioningWaste failed: %v", err)
 			}
 		}()
 	}
@@ -106,6 +117,8 @@ func RunAll(ctx context.Context, client s3.S3Client, bucket string, cfg Config) 
 				mu.Lock()
 				result.LargeFiles = files
 				mu.Unlock()
+			} else {
+				log.Printf("deep/coordinator: FindLargeFiles failed: %v", err)
 			}
 		}()
 	}
@@ -119,6 +132,8 @@ func RunAll(ctx context.Context, client s3.S3Client, bucket string, cfg Config) 
 				mu.Lock()
 				result.Naming = naming
 				mu.Unlock()
+			} else {
+				log.Printf("deep/coordinator: CheckNamingConvention failed: %v", err)
 			}
 		}()
 	}
@@ -132,6 +147,8 @@ func RunAll(ctx context.Context, client s3.S3Client, bucket string, cfg Config) 
 				mu.Lock()
 				result.CostEstimate = cost
 				mu.Unlock()
+			} else {
+				log.Printf("deep/coordinator: EstimateCost failed: %v", err)
 			}
 		}()
 	}
@@ -145,6 +162,8 @@ func RunAll(ctx context.Context, client s3.S3Client, bucket string, cfg Config) 
 				mu.Lock()
 				result.Virus = virus
 				mu.Unlock()
+			} else {
+				log.Printf("deep/coordinator: ScanObjectsForVirus failed: %v", err)
 			}
 		}()
 	}

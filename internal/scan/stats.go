@@ -21,7 +21,6 @@ type statsAggregator struct {
 	storageMap map[string]*storageAccum
 	prefixMap  map[string]*prefixAccum
 
-	startTime time.Time
 }
 
 type typeAccum struct {
@@ -50,7 +49,6 @@ func newStatsAggregator() *statsAggregator {
 		ageBuckets: make(map[string]*ageAccum),
 		storageMap: make(map[string]*storageAccum),
 		prefixMap:  make(map[string]*prefixAccum),
-		startTime:  time.Now(),
 	}
 }
 

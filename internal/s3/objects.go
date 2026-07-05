@@ -28,6 +28,9 @@ func (c *CubbitS3Client) HeadObject(ctx context.Context, bucket, key string) (*O
 	if resp.StorageClass != "" {
 		info.StorageClass = string(resp.StorageClass)
 	}
+	if resp.ServerSideEncryption != "" {
+		info.ServerSideEncryption = string(resp.ServerSideEncryption)
+	}
 	return info, nil
 }
 

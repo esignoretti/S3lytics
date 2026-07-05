@@ -101,6 +101,7 @@ func main() {
 	r.Use(middleware.Logger)
 	r.Use(middleware.Recoverer)
 	r.Use(middleware.Timeout(60 * time.Second))
+	r.Use(handlers.SecurityHeaders)
 	r.Use(authMiddleware(sessionManager))
 
 	h.ScanEngine.SetConfig(scan.Config{

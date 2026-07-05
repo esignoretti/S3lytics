@@ -10,7 +10,7 @@ import (
 func AnalyzeVersioningWaste(ctx context.Context, client s3.S3Client, bucket string) (*store.DeepVersioning, error) {
 	versions, deleteMarkers, err := client.ListObjectVersions(ctx, bucket)
 	if err != nil {
-		return &store.DeepVersioning{}, nil
+		return nil, err
 	}
 
 	result := &store.DeepVersioning{}

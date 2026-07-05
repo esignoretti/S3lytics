@@ -3,7 +3,7 @@ package handlers
 import (
 	"context"
 	"encoding/json"
-	"fmt"
+	"html/template"
 	"io/fs"
 	"log"
 	"net/http"
@@ -57,7 +57,7 @@ func (h *Handler) RegisterRoutes(r chi.Router) {
 	r.Post("/logout", h.PostLogout)
 
 	r.Get("/", h.GetDashboard)
-	r.Get("/buckets", h.GetBucketsJSON)
+	r.Get("/buckets", h.GetBucketsOptions)
 
 	r.Post("/scan/start", h.PostStartScan)
 	r.Get("/scan/{id}", h.GetScanReport)
@@ -96,7 +96,7 @@ func (h *Handler) PostLogin(w http.ResponseWriter, r *http.Request) {
 	signinResp, err := h.AuthService.Login(ctx, loginReq)
 	if err != nil {
 		log.Printf("login failed: %v", err)
-		renderLogin(w, h.Renderer, fmt.Sprintf("Login failed: %v", err))
+		renderLogin(w, h.Renderer, "Login failed. Check your credentials and try again.")
 		return
 	}
 
@@ -346,13 +346,12 @@ func (h *Handler) RestoreS3Clients(ctx context.Context) {
 }
 
 func (h *Handler) GetDashboard(w http.ResponseWriter, r *http.Request) {
-	ctx := context.Background()
-	projects, err := h.Store.GetProjects(ctx)
+	projects, err := h.Store.GetProjects(r.Context())
 	if err != nil {
 		log.Printf("get projects from store: %v", err)
 	}
 
-	acct, _ := h.Store.GetAccount(ctx)
+	acct, _ := h.Store.GetAccount(r.Context())
 	email := ""
 	if acct != nil {
 		email = acct.Email
@@ -364,10 +363,12 @@ func (h *Handler) GetDashboard(w http.ResponseWriter, r *http.Request) {
 		AccountEmail: email,
 		Projects:     projects,
 	}
-	_ = h.Renderer.Render(w, "layout.html", data)
+	if err := h.Renderer.Render(w, "layout.html", data); err != nil {
+		log.Printf("render error on %s: %v", r.URL.Path, err)
+	}
 }
 
-func (h *Handler) GetBucketsJSON(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) GetBucketsOptions(w http.ResponseWriter, r *http.Request) {
 	projectID := r.URL.Query().Get("project")
 	if projectID == "" {
 		w.Header().Set("Content-Type", "text/html")
@@ -375,7 +376,7 @@ func (h *Handler) GetBucketsJSON(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	buckets, err := h.Store.GetBuckets(context.Background(), projectID)
+	buckets, err := h.Store.GetBuckets(r.Context(), projectID)
 	if err != nil || len(buckets) == 0 {
 		w.Header().Set("Content-Type", "text/html")
 		w.Write([]byte(`<option value="">No buckets found</option>`))
@@ -383,11 +384,15 @@ func (h *Handler) GetBucketsJSON(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "text/html")
-	var html string
+	var sb strings.Builder
 	for _, b := range buckets {
-		html += fmt.Sprintf(`<option value="%s">%s</option>`, b.Name, b.Name)
+		sb.WriteString(`<option value="`)
+		sb.WriteString(template.HTMLEscapeString(b.Name))
+		sb.WriteString(`">`)
+		sb.WriteString(template.HTMLEscapeString(b.Name))
+		sb.WriteString(`</option>`)
 	}
-	w.Write([]byte(html))
+	w.Write([]byte(sb.String()))
 }
 
 func (h *Handler) PostStartScan(w http.ResponseWriter, r *http.Request) {
@@ -414,7 +419,7 @@ func (h *Handler) PostStartScan(w http.ResponseWriter, r *http.Request) {
 	}
 	h.ScanEngine.SetS3Client(client)
 
-	ctx := context.Background()
+	ctx := r.Context()
 
 	var scanID string
 	var err error
@@ -426,7 +431,7 @@ func (h *Handler) PostStartScan(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		http.Error(w, "Scan failed to start", http.StatusInternalServerError)
 		return
 	}
 
@@ -461,7 +466,9 @@ func (h *Handler) GetScanProgress(w http.ResponseWriter, r *http.Request) {
 
 	// HTMX poll requests get just the fragment; browser nav gets the full layout
 	if r.Header.Get("HX-Request") == "true" {
-		_ = h.Renderer.Render(w, "scan_progress", data)
+		if err := h.Renderer.Render(w, "scan_progress", data); err != nil {
+			log.Printf("render error on %s: %v", r.URL.Path, err)
+		}
 	} else {
 		data.LoggedIn = true
 		data.Page = "scan_progress"
@@ -469,7 +476,11 @@ func (h *Handler) GetScanProgress(w http.ResponseWriter, r *http.Request) {
 		if acct != nil {
 			data.AccountEmail = acct.Email
 		}
-		_ = h.Renderer.Render(w, "layout.html", data)
+		if err := h.Renderer.Render(w, "layout.html", data); err != nil {
+			log.Printf("render error on %s: %v", r.URL.Path, err)
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
 	}
 }
 
@@ -491,15 +502,14 @@ func (h *Handler) GetScanStatus(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) GetScanReport(w http.ResponseWriter, r *http.Request) {
 	scanID := chi.URLParam(r, "id")
-	ctx := context.Background()
 
-	result, err := h.Store.GetScanResult(ctx, scanID)
+	result, err := h.Store.GetScanResult(r.Context(), scanID)
 	if err != nil {
 		http.Error(w, "scan not found", http.StatusNotFound)
 		return
 	}
 
-	acct, _ := h.Store.GetAccount(ctx)
+	acct, _ := h.Store.GetAccount(r.Context())
 	email := ""
 	if acct != nil {
 		email = acct.Email
@@ -512,22 +522,25 @@ func (h *Handler) GetScanReport(w http.ResponseWriter, r *http.Request) {
 		Result:       result,
 	}
 
-	_ = h.Renderer.Render(w, "layout.html", data)
+	if err := h.Renderer.Render(w, "layout.html", data); err != nil {
+		log.Printf("render error on %s: %v", r.URL.Path, err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
 }
 
 func (h *Handler) PostDeleteScan(w http.ResponseWriter, r *http.Request) {
 	scanID := chi.URLParam(r, "id")
-	if err := h.Store.DeleteScan(context.Background(), scanID); err != nil {
+	if err := h.Store.DeleteScan(r.Context(), scanID); err != nil {
 		log.Printf("delete scan %s: %v", scanID, err)
 	}
 	http.Redirect(w, r, "/history", http.StatusSeeOther)
 }
 
 func (h *Handler) GetHistory(w http.ResponseWriter, r *http.Request) {
-	ctx := context.Background()
 	bucket := r.URL.Query().Get("bucket")
 
-	records, err := h.Store.ListScans(ctx, bucket)
+	records, err := h.Store.ListScans(r.Context(), bucket)
 	if err != nil {
 		records = []store.ScanRecord{}
 	}
@@ -542,7 +555,7 @@ func (h *Handler) GetHistory(w http.ResponseWriter, r *http.Request) {
 	}
 
 	for i, item := range items {
-		result, err := h.Store.GetScanResult(ctx, item.ID)
+		result, err := h.Store.GetScanResult(r.Context(), item.ID)
 		if err == nil && result != nil {
 			items[i].TotalObjects = result.Summary.TotalObjects
 		}
@@ -553,7 +566,7 @@ func (h *Handler) GetHistory(w http.ResponseWriter, r *http.Request) {
 		buckets = append(buckets, b)
 	}
 
-	acct, _ := h.Store.GetAccount(ctx)
+	acct, _ := h.Store.GetAccount(r.Context())
 	email := ""
 	if acct != nil {
 		email = acct.Email
@@ -568,7 +581,11 @@ func (h *Handler) GetHistory(w http.ResponseWriter, r *http.Request) {
 		SelectedBucket: bucket,
 	}
 
-	_ = h.Renderer.Render(w, "layout.html", data)
+	if err := h.Renderer.Render(w, "layout.html", data); err != nil {
+		log.Printf("render error on %s: %v", r.URL.Path, err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
 }
 
 func (h *Handler) GetComparison(w http.ResponseWriter, r *http.Request) {
@@ -578,9 +595,8 @@ func (h *Handler) GetComparison(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ctx := context.Background()
-	resultA, errA := h.Store.GetScanResult(ctx, scans[0])
-	resultB, errB := h.Store.GetScanResult(ctx, scans[1])
+	resultA, errA := h.Store.GetScanResult(r.Context(), scans[0])
+	resultB, errB := h.Store.GetScanResult(r.Context(), scans[1])
 
 	if errA != nil || errB != nil {
 		http.Error(w, "scan not found", http.StatusNotFound)
@@ -590,7 +606,7 @@ func (h *Handler) GetComparison(w http.ResponseWriter, r *http.Request) {
 	objDelta := int64(resultB.Summary.TotalObjects) - int64(resultA.Summary.TotalObjects)
 	sizeDelta := resultB.Summary.TotalSize - resultA.Summary.TotalSize
 
-	acct, _ := h.Store.GetAccount(ctx)
+	acct, _ := h.Store.GetAccount(r.Context())
 	email := ""
 	if acct != nil {
 		email = acct.Email
@@ -606,7 +622,11 @@ func (h *Handler) GetComparison(w http.ResponseWriter, r *http.Request) {
 		SizeDelta:    sizeDelta,
 	}
 
-	_ = h.Renderer.Render(w, "layout.html", data)
+	if err := h.Renderer.Render(w, "layout.html", data); err != nil {
+		log.Printf("render error on %s: %v", r.URL.Path, err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
 }
 
 func (h *Handler) GetSettings(w http.ResponseWriter, r *http.Request) {
@@ -618,8 +638,7 @@ func (h *Handler) GetSettings(w http.ResponseWriter, r *http.Request) {
 		PrefixTimeout: time.Duration(settings.ScanPrefixTimeoutSec) * time.Second,
 	})
 
-	ctx := context.Background()
-	acct, _ := h.Store.GetAccount(ctx)
+	acct, _ := h.Store.GetAccount(r.Context())
 	email := ""
 	if acct != nil {
 		email = acct.Email
@@ -631,7 +650,11 @@ func (h *Handler) GetSettings(w http.ResponseWriter, r *http.Request) {
 		AccountEmail: email,
 		Settings:     settings,
 	}
-	_ = h.Renderer.Render(w, "layout.html", data)
+	if err := h.Renderer.Render(w, "layout.html", data); err != nil {
+		log.Printf("render error on %s: %v", r.URL.Path, err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
 }
 
 func (h *Handler) PostSettings(w http.ResponseWriter, r *http.Request) {
@@ -687,7 +710,7 @@ func (h *Handler) PostSettings(w http.ResponseWriter, r *http.Request) {
 			TotalObjects: int64(len(settingsData)),
 		},
 	}
-	_ = h.Store.SaveScanResult(context.Background(), settingsRecord)
+	_ = h.Store.SaveScanResult(r.Context(), settingsRecord)
 
 	h.ScanEngine.SetConfig(scan.Config{
 		Workers:       settings.ScanWorkers,
@@ -724,6 +747,17 @@ func (h *Handler) loadSettings() *web.SettingsData {
 			"GLACIER_INSTANT_RETRIEVAL": 0.004,
 		},
 	}
+}
+
+func SecurityHeaders(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("X-Frame-Options", "DENY")
+		w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
+		w.Header().Set("X-XSS-Protection", "0")
+		w.Header().Set("Permissions-Policy", "geolocation=(), microphone=(), camera=()")
+		next.ServeHTTP(w, r)
+	})
 }
 
 func renderLogin(w http.ResponseWriter, r *web.TemplateRenderer, errMsg string) {

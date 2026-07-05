@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/dgraph-io/badger/v4"
 )
@@ -49,7 +50,9 @@ type Store interface {
 }
 
 type BadgerStore struct {
-	db *badger.DB
+	db     *badger.DB
+	ctx    context.Context
+	cancel context.CancelFunc
 }
 
 var (
@@ -74,10 +77,28 @@ func NewBadgerStore(dir string) (*BadgerStore, error) {
 	if err != nil {
 		return nil, fmt.Errorf("badger open: %w", err)
 	}
-	return &BadgerStore{db: db}, nil
+
+	ctx, cancel := context.WithCancel(context.Background())
+	s := &BadgerStore{db: db, ctx: ctx, cancel: cancel}
+
+	go func() {
+		ticker := time.NewTicker(10 * time.Minute)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				db.RunValueLogGC(0.5)
+			}
+		}
+	}()
+
+	return s, nil
 }
 
 func (s *BadgerStore) Close() error {
+	s.cancel()
 	return s.db.Close()
 }
 
@@ -420,6 +441,48 @@ func (s *BadgerStore) DeleteScan(ctx context.Context, id string) error {
 	if err := s.del(ctx, scanResultKey(id)); err != nil && err != badger.ErrKeyNotFound {
 		return err
 	}
+
+	// Remove scanID from all bucket indices
+	bucketKeys, err := s.iterateKeys(ctx, prefixBucketIndex)
+	if err != nil {
+		return err
+	}
+	for _, bk := range bucketKeys {
+		err := s.db.Update(func(txn *badger.Txn) error {
+			item, err := txn.Get([]byte(bk))
+			if err != nil {
+				return err
+			}
+			data, err := item.ValueCopy(nil)
+			if err != nil {
+				return err
+			}
+			var ids []string
+			if err := json.Unmarshal(data, &ids); err != nil {
+				return nil
+			}
+			found := false
+			for i, scanID := range ids {
+				if scanID == id {
+					ids = append(ids[:i], ids[i+1:]...)
+					found = true
+					break
+				}
+			}
+			if !found {
+				return nil
+			}
+			newData, err := json.Marshal(ids)
+			if err != nil {
+				return err
+			}
+			return txn.Set([]byte(bk), newData)
+		})
+		if err != nil {
+			return err
+		}
+	}
+
 	return nil
 }
 
@@ -456,14 +519,16 @@ func (s *BadgerStore) GetScanResult(ctx context.Context, scanID string) (*ScanRe
 }
 
 func (s *BadgerStore) AddScanToBucketIndex(ctx context.Context, bucket string, scanID string) error {
-	key := append(prefixBucketIndex, []byte(bucket)...)
+	key := append(prefixBucketIndex, []byte(bucket+"/")...)
 	return s.db.Update(func(txn *badger.Txn) error {
 		item, err := txn.Get(key)
 		var ids []string
 		if err == nil {
 			data, err := item.ValueCopy(nil)
 			if err == nil {
-				json.Unmarshal(data, &ids)
+				if err := json.Unmarshal(data, &ids); err != nil {
+				ids = nil
+			}
 			}
 		}
 		for _, id := range ids {
@@ -481,7 +546,7 @@ func (s *BadgerStore) AddScanToBucketIndex(ctx context.Context, bucket string, s
 }
 
 func (s *BadgerStore) GetBucketScanIDs(ctx context.Context, bucket string) ([]string, error) {
-	key := append(prefixBucketIndex, []byte(bucket)...)
+	key := append(prefixBucketIndex, []byte(bucket+"/")...)
 	data, err := s.get(ctx, key)
 	if err != nil {
 		return nil, err

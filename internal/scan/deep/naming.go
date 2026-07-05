@@ -2,6 +2,7 @@ package deep
 
 import (
 	"context"
+	"log"
 	"regexp"
 
 	"github.com/esignoretti/s3lytics/internal/s3"
@@ -29,7 +30,8 @@ func CheckNamingConvention(ctx context.Context, client s3.S3Client, bucket strin
 	for {
 		page, err := client.ListObjectsPage(ctx, bucket, "", continuationToken)
 		if err != nil {
-			break
+			log.Printf("deep/naming: pagination error after %d objects, returning partial results: %v", result.NonCompliantCount, err)
+			return result, nil
 		}
 
 		for _, obj := range page.Objects {

@@ -47,7 +47,7 @@ func AuditEncryption(ctx context.Context, client s3.S3Client, bucket string) (*s
 				continue
 			}
 
-			if info.StorageClass != "" && info.StorageClass != "STANDARD" {
+			if info.ServerSideEncryption != "" {
 				encryptedCount++
 			} else {
 				encResult.UnencryptedKeys = append(encResult.UnencryptedKeys, obj.Key)
