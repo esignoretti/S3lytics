@@ -419,7 +419,9 @@ func (h *Handler) PostStartScan(w http.ResponseWriter, r *http.Request) {
 	}
 	h.ScanEngine.SetS3Client(client)
 
-	ctx := r.Context()
+	// Use background context for scan goroutine — r.Context() is cancelled when
+	// the HTTP response is written, killing the background scan immediately.
+	ctx := context.Background()
 
 	var scanID string
 	var err error
