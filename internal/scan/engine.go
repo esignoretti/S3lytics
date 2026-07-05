@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"math/rand"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -91,6 +90,18 @@ func (e *Engine) SetConfig(cfg Config) {
 	e.config = cfg
 }
 
+func (e *Engine) getConfig() Config {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	return e.config
+}
+
+func (e *Engine) getClient() s3.S3Client {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	return e.client
+}
+
 func (e *Engine) saveObjectBatch(ctx context.Context, batch []*store.ObjectRecord, bucket string) error {
 	if len(batch) == 0 {
 		return nil
@@ -99,11 +110,13 @@ func (e *Engine) saveObjectBatch(ctx context.Context, batch []*store.ObjectRecor
 }
 
 func (e *Engine) discoverPrefixes(ctx context.Context, bucket string) ([]string, error) {
-	timeout := e.config.PrefixTimeout
+	cfg := e.getConfig()
+	timeout := cfg.PrefixTimeout
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	prefixes, err := e.client.ListPrefixes(ctx, bucket, "")
+	client := e.getClient()
+	prefixes, err := client.ListPrefixes(ctx, bucket, "")
 	if err != nil {
 		return nil, err
 	}
@@ -117,7 +130,10 @@ func (e *Engine) runDispatcher(ctx context.Context, bucket string, prefixChan ch
 	prefixes, err := e.discoverPrefixes(ctx, bucket)
 	if err != nil {
 		log.Printf("scan: prefix discovery failed, using single prefix: %v", err)
-		prefixChan <- ""
+		select {
+		case prefixChan <- "":
+		case <-ctx.Done():
+		}
 		return nil
 	}
 
@@ -133,11 +149,21 @@ func (e *Engine) runDispatcher(ctx context.Context, bucket string, prefixChan ch
 
 func (e *Engine) runWorker(ctx context.Context, bucket, prefix string, objChan chan<- collectorMsg) {
 	isTruncated := true
+	client := e.getClient()
 
-	// Kick off the first page fetch (with prefix to divide work)
+	sendMsg := func(msg collectorMsg) bool {
+		select {
+		case objChan <- msg:
+			return true
+		case <-ctx.Done():
+			return false
+		}
+	}
+
+	// Kick off the first page fetch
 	nextCh := make(chan pageResult, 1)
 	go func() {
-		page, err := e.client.ListObjectsPage(ctx, bucket, prefix, nil)
+		page, err := client.ListObjectsPage(ctx, bucket, prefix, nil)
 		nextCh <- pageResult{page, err}
 	}()
 
@@ -146,26 +172,24 @@ func (e *Engine) runWorker(ctx context.Context, bucket, prefix string, objChan c
 			return
 		}
 
-		// Wait for the current page to arrive
 		result := <-nextCh
 		if result.err != nil {
-			objChan <- collectorMsg{err: result.err}
+			sendMsg(collectorMsg{err: result.err})
 			return
 		}
 		page := result.page
 
-		// If there's a next page, kick off its fetch while we drain this one
 		if page.IsTruncated {
 			nextCh = make(chan pageResult, 1)
 			token := page.ContinuationToken
 			go func() {
-				p, err := e.client.ListObjectsPage(ctx, bucket, prefix, token)
+				p, err := client.ListObjectsPage(ctx, bucket, prefix, token)
 				nextCh <- pageResult{p, err}
 			}()
 		}
 
 		for _, obj := range page.Objects {
-			objChan <- collectorMsg{
+			if !sendMsg(collectorMsg{
 				obj: &store.ObjectRecord{
 					Key:          obj.Key,
 					ETag:         obj.ETag,
@@ -173,6 +197,8 @@ func (e *Engine) runWorker(ctx context.Context, bucket, prefix string, objChan c
 					LastModified: obj.LastModified,
 					StorageClass: obj.StorageClass,
 				},
+			}) {
+				return
 			}
 		}
 
@@ -182,7 +208,9 @@ func (e *Engine) runWorker(ctx context.Context, bucket, prefix string, objChan c
 
 func (e *Engine) runCollector(ctx context.Context, scanID, bucket string, objChan <-chan collectorMsg, previousObjects map[string]*store.ObjectRecord) (*statsAggregator, *store.DeltaReport, error) {
 	agg := newStatsAggregator()
-	batch := make([]*store.ObjectRecord, 0, e.config.BatchSize)
+	cfg := e.getConfig()
+	batchCap := cfg.BatchSize
+	batch := make([]*store.ObjectRecord, 0, batchCap)
 	startTime := time.Now()
 	var objectsReceived atomic.Int64
 
@@ -214,7 +242,6 @@ func (e *Engine) runCollector(ctx context.Context, scanID, bucket string, objCha
 		return nil
 	}
 
-	// Push live progress every 500ms so the UI doesn't show 0 until the first batch flush
 	progressTick := time.NewTicker(500 * time.Millisecond)
 	defer progressTick.Stop()
 
@@ -254,7 +281,7 @@ func (e *Engine) runCollector(ctx context.Context, scanID, bucket string, objCha
 				seenKeys[msg.obj.Key] = true
 				currentKeys[msg.obj.Key] = msg.obj
 			}
-			if len(batch) >= e.config.BatchSize {
+			if len(batch) >= batchCap {
 				if err := flushBatch(); err != nil {
 					return nil, nil, err
 				}
@@ -316,7 +343,8 @@ func (e *Engine) runFullScan(ctx context.Context, scanID, bucket string) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	prefixChan := make(chan string, e.config.Workers)
+	cfg := e.getConfig()
+	prefixChan := make(chan string, cfg.Workers)
 	objChan := make(chan collectorMsg, 1000)
 	startTime := time.Now()
 
@@ -327,8 +355,14 @@ func (e *Engine) runFullScan(ctx context.Context, scanID, bucket string) {
 	}
 	collCh := make(chan collResult, 1)
 	go func() {
-		agg, delta, err := e.runCollector(ctx, scanID, bucket, objChan, nil)
-		collCh <- collResult{agg, delta, err}
+		var r collResult
+		defer func() {
+			if rec := recover(); rec != nil {
+				r.err = fmt.Errorf("collector panic: %v", rec)
+			}
+			collCh <- r
+		}()
+		r.agg, r.delta, r.err = e.runCollector(ctx, scanID, bucket, objChan, nil)
 	}()
 
 	go func() {
@@ -339,7 +373,7 @@ func (e *Engine) runFullScan(ctx context.Context, scanID, bucket string) {
 	}()
 
 	var wg sync.WaitGroup
-	for i := 0; i < e.config.Workers; i++ {
+	for i := 0; i < cfg.Workers; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -381,11 +415,17 @@ func (e *Engine) runFullScan(ctx context.Context, scanID, bucket string) {
 		return
 	}
 
-	record, _ := e.store.GetScan(ctx, scanID)
-	record.Status = "completed"
-	record.Duration = time.Since(startTime).String()
-	_ = e.store.SaveScan(ctx, record)
-	_ = e.store.AddScanToBucketIndex(ctx, bucket, scanID)
+	record, err := e.store.GetScan(ctx, scanID)
+	if err == nil && record != nil {
+		record.Status = "completed"
+		record.Duration = time.Since(startTime).String()
+		if err := e.store.SaveScan(ctx, record); err != nil {
+			log.Printf("scan: failed to update scan record: %v", err)
+		}
+	}
+	if err := e.store.AddScanToBucketIndex(ctx, bucket, scanID); err != nil {
+		log.Printf("scan: failed to add to bucket index: %v", err)
+	}
 
 	e.setProgress(&ScanProgress{
 		ScanID:      scanID,
@@ -414,10 +454,12 @@ func (e *Engine) updateProgress(scanID string, objectsDone int64, elapsed time.D
 
 func (e *Engine) failScan(scanID string, errMsg string) {
 	ctx := context.Background()
-	record, _ := e.store.GetScan(ctx, scanID)
-	if record != nil {
+	record, err := e.store.GetScan(ctx, scanID)
+	if err == nil && record != nil {
 		record.Status = "failed"
-		_ = e.store.SaveScan(ctx, record)
+		if err := e.store.SaveScan(ctx, record); err != nil {
+			log.Printf("scan: failed to save failed status: %v", err)
+		}
 	}
 	e.setProgress(&ScanProgress{
 		ScanID: scanID,
@@ -484,8 +526,10 @@ func (e *Engine) runIncrementalScan(ctx context.Context, scanID, bucket string) 
 		e.mu.Unlock()
 	}()
 
-	// Load all previous object keys and build a map of key -> previous object
-	previousKeys, _ := e.store.ListObjectKeys(ctx, bucket)
+	previousKeys, err := e.store.ListObjectKeys(ctx, bucket)
+	if err != nil {
+		log.Printf("scan: failed to list previous keys for delta: %v", err)
+	}
 	previousObjects := make(map[string]*store.ObjectRecord)
 	for _, k := range previousKeys {
 		prefix := "objects/" + bucket + "/"
@@ -504,7 +548,8 @@ func (e *Engine) runIncrementalScan(ctx context.Context, scanID, bucket string) 
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	prefixChan := make(chan string, e.config.Workers)
+	cfg := e.getConfig()
+	prefixChan := make(chan string, cfg.Workers)
 	objChan := make(chan collectorMsg, 1000)
 	startTime := time.Now()
 
@@ -515,8 +560,14 @@ func (e *Engine) runIncrementalScan(ctx context.Context, scanID, bucket string) 
 	}
 	collCh := make(chan collResult, 1)
 	go func() {
-		agg, delta, err := e.runCollector(ctx, scanID, bucket, objChan, previousObjects)
-		collCh <- collResult{agg, delta, err}
+		var r collResult
+		defer func() {
+			if rec := recover(); rec != nil {
+				r.err = fmt.Errorf("collector panic: %v", rec)
+			}
+			collCh <- r
+		}()
+		r.agg, r.delta, r.err = e.runCollector(ctx, scanID, bucket, objChan, previousObjects)
 	}()
 
 	go func() {
@@ -527,7 +578,7 @@ func (e *Engine) runIncrementalScan(ctx context.Context, scanID, bucket string) 
 	}()
 
 	var wg sync.WaitGroup
-	for i := 0; i < e.config.Workers; i++ {
+	for i := 0; i < cfg.Workers; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -570,11 +621,17 @@ func (e *Engine) runIncrementalScan(ctx context.Context, scanID, bucket string) 
 		return
 	}
 
-	record, _ := e.store.GetScan(ctx, scanID)
-	record.Status = "completed"
-	record.Duration = time.Since(startTime).String()
-	_ = e.store.SaveScan(ctx, record)
-	_ = e.store.AddScanToBucketIndex(ctx, bucket, scanID)
+	record, err := e.store.GetScan(ctx, scanID)
+	if err == nil && record != nil {
+		record.Status = "completed"
+		record.Duration = time.Since(startTime).String()
+		if err := e.store.SaveScan(ctx, record); err != nil {
+			log.Printf("scan: failed to update scan record: %v", err)
+		}
+	}
+	if err := e.store.AddScanToBucketIndex(ctx, bucket, scanID); err != nil {
+		log.Printf("scan: failed to add to bucket index: %v", err)
+	}
 
 	e.setProgress(&ScanProgress{
 		ScanID:      scanID,
@@ -603,7 +660,6 @@ func (e *Engine) computeDelta(previousObjects map[string]*store.ObjectRecord, se
 		}
 	}
 
-	// Deleted = objects that were in previous scan but not in current listing
 	for key := range previousObjects {
 		if !seenKeys[key] {
 			delta.Deleted++
@@ -611,32 +667,4 @@ func (e *Engine) computeDelta(previousObjects map[string]*store.ObjectRecord, se
 	}
 
 	return delta
-}
-
-func retryWithBackoff(ctx context.Context, operation string, fn func() error) error {
-	delays := []time.Duration{100 * time.Millisecond, 500 * time.Millisecond, 1 * time.Second, 5 * time.Second}
-	var lastErr error
-
-	for _, delay := range delays {
-		if ctx.Err() != nil {
-			return ctx.Err()
-		}
-		err := fn()
-		if err == nil {
-			return nil
-		}
-		lastErr = err
-		errStr := err.Error()
-		if strings.Contains(errStr, "SlowDown") ||
-			strings.Contains(errStr, "RequestLimitExceeded") ||
-			strings.Contains(errStr, "503") ||
-			strings.Contains(errStr, "429") {
-			log.Printf("S3 throttling on %s, backing off %v: %v", operation, delay, err)
-			time.Sleep(delay + time.Duration(rand.Intn(100))*time.Millisecond)
-			continue
-		}
-		return err
-	}
-
-	return fmt.Errorf("%s failed after retries: %w", operation, lastErr)
 }
